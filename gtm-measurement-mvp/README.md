@@ -1,14 +1,9 @@
 # gtm-measurement-mvp
 
-MVP para convertir un caso de plan de medición (imágenes + metadata) en artefactos iniciales para GTM.
+MVP base para convertir un caso de plan de medición (imágenes + metadata) en artefactos iniciales para GTM.
 
 ## Requisitos
 - Python 3.11+
-- Dependencias:
-
-```bash
-pip install -r requirements.txt
-```
 
 ## Ejecutar caso localmente
 Desde la raíz del proyecto (`gtm-measurement-mvp/`):
@@ -17,11 +12,11 @@ Desde la raíz del proyecto (`gtm-measurement-mvp/`):
 python -m src.cli.run_case --case-id case_001 --repo-root .
 ```
 
-## Output esperado (fase actual)
+## Output esperado (Fase 1)
 Se crea `outputs/case_001/` con:
-- `measurement_case.json` (interacciones detectadas desde imágenes)
+- `measurement_case.json`
 - `tag_template.js` (stub)
 - `trigger_selector.txt` (stub)
-- `report.md` (evidencia textual, warnings y campos incompletos)
+- `report.md` (estado y alertas)
 
-> Nota: no incluye scraping complejo del DOM ni generación final de GTM todavía.
+> Nota: esta fase deja esqueleto y stubs; no incluye scraping complejo ni generación GTM final.

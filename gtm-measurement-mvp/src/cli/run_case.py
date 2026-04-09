@@ -129,8 +129,6 @@ def _render_report(
     ])
 
     return "\n".join(lines) + "\n"
-
-
 def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
     case_dir = repo_root / "inputs" / case_id
     images_dir = case_dir / "images"
