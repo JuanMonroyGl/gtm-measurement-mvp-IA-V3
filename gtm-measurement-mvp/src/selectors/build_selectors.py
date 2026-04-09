@@ -45,14 +45,14 @@ def _preferred_selector(interaction: dict[str, Any], soup: BeautifulSoup) -> tup
     if kind == "button" and "descarga" in text_ref and soup.select('a[href*="apps.apple.com"]'):
         return 'a[href*="apps.apple.com"]', "href estable de App Store"
 
-    if kind == "button" and "inscribir" in ubicacion and soup.select('.swiper-recibe-envia .swiper-slide button'):
-        return '.swiper-recibe-envia .swiper-slide button', "tabs de inscripción detectados"
+    if kind == "button" and "inscribir" in ubicacion and soup.select('.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide'):
+        return '.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide', "grupo de tabs de inscripción detectado"
 
-    if kind == "card" and soup.select('div.card-razon-beneficio-vivienda'):
-        return 'div.card-razon-beneficio-vivienda', "contenedor card estable detectado"
+    if kind == "card" and soup.select('.card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda'):
+        return '.card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda', "grupo de cards de beneficios detectado"
 
-    if kind == "tap" and soup.select('button.caja-titulo-acodeon'):
-        return 'button.caja-titulo-acodeon', "acordeón FAQ detectado"
+    if kind == "tap" and soup.select('.contenido-preguntas-frecuentes .acordeon-pregunta-frecuente'):
+        return '.contenido-preguntas-frecuentes .acordeon-pregunta-frecuente', "grupo de preguntas frecuentes detectado"
 
     if kind == "link" and soup.select('a[href*=".pdf"]'):
         return 'a[href*=".pdf"]', "link PDF estable detectado"

@@ -7,8 +7,23 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 
+EXPECTED_GROUP_SELECTORS = {
+    ".card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda",
+    ".contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide",
+    ".contenido-preguntas-frecuentes .acordeon-pregunta-frecuente",
+}
+
+
+def _is_expected_group_selector(selector: str, interaction: dict[str, Any]) -> bool:
+    if selector in EXPECTED_GROUP_SELECTORS:
+        return True
+
+    elemento = (interaction.get("elemento") or "").lower()
+    return "{{texto del" in elemento and selector in EXPECTED_GROUP_SELECTORS
+
+
 def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Compute match_count and ambiguity warnings for each selector."""
+    """Compute match_count and warnings honoring valid multi-match groups."""
     html = dom_snapshot.get("rendered_dom_html") or dom_snapshot.get("raw_html")
     if not html:
         return {
@@ -24,7 +39,13 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
     for interaction in measurement_case.get("interacciones", []):
         selector = interaction.get("selector_candidato")
         interaction.setdefault("warnings", [])
-        interaction["warnings"] = [w for w in interaction.get("warnings", []) if "selector_candidato" not in w and "Error al validar selector" not in w and "Sin selector_candidato" not in w]
+        interaction["warnings"] = [
+            w
+            for w in interaction.get("warnings", [])
+            if "selector_candidato" not in w
+            and "Error al validar selector" not in w
+            and "Sin selector_candidato" not in w
+        ]
 
         if not selector:
             interaction["match_count"] = None
@@ -40,9 +61,14 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
             if match_count == 0:
                 interaction["warnings"].append("selector_candidato no encontró elementos en el DOM.")
             elif match_count > 1:
-                interaction["warnings"].append(
-                    f"selector_candidato retornó {match_count} matches (posible ambigüedad)."
-                )
+                if _is_expected_group_selector(selector, interaction):
+                    interaction["warnings"].append(
+                        f"selector_candidato retornó {match_count} matches y es válido como grupo esperado en la sección."
+                    )
+                else:
+                    interaction["warnings"].append(
+                        f"selector_candidato retornó {match_count} matches (posible ambigüedad)."
+                    )
         except Exception as exc:
             interaction["match_count"] = None
             interaction["warnings"].append(f"Error al validar selector: {exc}")
