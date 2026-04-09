@@ -1,0 +1,9 @@
+{
+  "case_id": "case_001",
+  "activo": "bancolombia",
+  "seccion": "pagos",
+  "plan_url": "https://www.bancolombia.com/pagos/apple-pay",
+  "target_url": "https://www.bancolombia.com/pagos/apple-pay",
+  "page_path_regex": "/pagos/apple-pay",
+  "notes": "Las imagenes del plan pueden mostrar URL QA. Usar target_url para scraping."
+}
