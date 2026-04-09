@@ -72,7 +72,7 @@ def _render_report(
         "## Estado",
         "- Extracción de texto desde imágenes: habilitada cuando OCR está disponible.",
         "- Selección y validación básica de selectores: habilitada.",
-        "- Scraping complejo y generación GTM final: pendiente por diseño de fase.",
+        "- Generación GTM final: generada en tag_template.js (una etiqueta por caso).",
         "",
         "## Evidencia por imagen",
     ]
@@ -125,6 +125,24 @@ def _render_report(
         null_fields = _incomplete_fields(interaction)
         if null_fields:
             lines.append(f"  - null_fields: {', '.join(null_fields)}")
+
+
+    lines.extend([
+        "",
+        "## Diferencias relevantes frente al ejemplo manual",
+    ])
+
+    for interaction in measurement_case.get("interacciones", []):
+        if interaction.get("flujo") == "billetera de google":
+            lines.append("- Se conserva flujo 'billetera de google' según plan detectado.")
+            break
+
+    for interaction in measurement_case.get("interacciones", []):
+        match_count = interaction.get("match_count")
+        if isinstance(match_count, int) and match_count > 1:
+            lines.append(
+                f"- {interaction.get('tipo_evento')} usa selector de grupo válido con {match_count} matches en la sección esperada."
+            )
 
     lines.extend([
         "",
