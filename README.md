@@ -6,7 +6,6 @@ Este repositorio transforma un caso de medición (imágenes del plan + metadata)
 No es un publicador automático en GTM ni una herramienta autoservicio final: es un **MVP funcional de uso interno** que acelera trabajo técnico y mantiene revisión humana obligatoria.
 
 ## Estado actual del MVP
-- ✅ Estructura del repo aplanada en la **raíz** (sin carpeta anidada adicional).
 - ✅ Pipeline ejecutable por caso desde `src/cli/run_case.py`.
 - ✅ OCR operativo cuando el entorno está listo.
 - ✅ Fallback por `image_evidence.json` cuando OCR no está disponible y existe evidencia previa.
@@ -155,12 +154,37 @@ python checks/compare_case_outputs_against_examples.py --case-id case_001 --repo
 - **Selectores ambiguos**: revisar `report.md` y ajustar estrategia de selector en validación humana.
 - **Diferencias contra implementación previa**: comparar con `examples/` y documentar decisión en reporte.
 
-## Qué sigue a futuro (realista)
+## Qué sigue a futuro
 - Mejorar cobertura de casos y diversidad de layouts.
 - Endurecer validaciones automáticas de selectores y confidence.
 - Robustecer extracción OCR para entornos heterogéneos.
 - Ampliar checks automáticos por tipo de evento.
 - Estandarizar criterios de aceptación previos a producción.
+- Incorporar una capa **asistida por IA** para resolver casos ambiguos en la selección de elementos del DOM.
+
+### Evolución asistida por IA
+La idea no es reemplazar el pipeline actual, sino complementarlo.
+
+Hoy el flujo usa:
+- OCR o fallback para extraer información del plan
+- reglas y heurísticas para proponer selectores
+- validación humana en GTM Preview
+
+La siguiente evolución lógica sería usar IA solo cuando haya ambigüedad, por ejemplo:
+- varios elementos parecidos en la página
+- textos similares en distintos bloques
+- componentes complejos donde un selector heurístico puede ser demasiado amplio o frágil
+
+En ese escenario, la IA ayudaría a:
+- priorizar el candidato correcto dentro del DOM
+- reducir ambigüedad en casos complejos
+- mejorar la calidad de los selectores propuestos
+
+El objetivo sería mantener un enfoque híbrido:
+- **reglas determinísticas** para los casos claros
+- **asistencia de IA** para los casos ambiguos
+
+Esto permitiría que el proyecto sea más robusto sin perder control técnico ni trazabilidad.
 
 ---
 
