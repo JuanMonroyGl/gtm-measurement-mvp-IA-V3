@@ -90,6 +90,11 @@ Cada interacción debe incluir:
 - El parser debe construir el caso aunque algunas imágenes no incluyan URL legible
 - Si falta información en las imágenes, completar desde `metadata.json` y reportarlo en `report.md`
 
+## Convención de benchmark manual por caso
+- Para casos con implementación manual previa, usar `examples/case_XXX_expected_tag.js`, `examples/case_XXX_expected_trigger.txt` y `examples/case_XXX_notes.md` como benchmark de comparación.
+- Estos archivos son referencia útil para detectar diferencias, posibles errores o mejoras del sistema.
+- No reemplazan la fuente principal del caso: plan de medición, página real y `measurement_case` generado.
+
 ## Done when
 - Existe `measurement_case.json`
 - Existe `tag_template.js`
