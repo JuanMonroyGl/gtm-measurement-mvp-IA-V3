@@ -45,6 +45,45 @@ def _normalize_text_value(value: str | None) -> str | None:
     return cleaned or None
 
 
+def _coalesce_metadata_interactions(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("interacciones", "interactions", "eventos"):
+        value = metadata.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _normalize_metadata_interaction(
+    *,
+    entry: dict[str, Any],
+    metadata_activo: str | None,
+    metadata_seccion: str | None,
+    metadata_plan_url: str | None,
+    metadata_target_url: str | None,
+    metadata_page_path_regex: str | None,
+) -> dict[str, Any]:
+    warnings = list(entry.get("warnings") or [])
+    warnings.append("Interacción completada desde metadata por falta de extracción confiable en imágenes.")
+
+    return {
+        "tipo_evento": _normalize_text_value(entry.get("tipo_evento") or entry.get("evento")),
+        "activo": _normalize_text_value(entry.get("activo")) or metadata_activo,
+        "seccion": _normalize_text_value(entry.get("seccion")) or metadata_seccion,
+        "flujo": _normalize_text_value(entry.get("flujo")),
+        "elemento": _normalize_text_value(entry.get("elemento")),
+        "ubicacion": _normalize_text_value(entry.get("ubicacion")),
+        "plan_url": _normalize_text_value(entry.get("plan_url")) or metadata_plan_url,
+        "target_url": _normalize_text_value(entry.get("target_url")) or metadata_target_url,
+        "page_path_regex": _normalize_text_value(entry.get("page_path_regex")) or metadata_page_path_regex,
+        "texto_referencia": _normalize_text_value(entry.get("texto_referencia")),
+        "selector_candidato": _normalize_text_value(entry.get("selector_candidato")),
+        "selector_activador": _normalize_text_value(entry.get("selector_activador")),
+        "match_count": entry.get("match_count"),
+        "confidence": entry.get("confidence"),
+        "warnings": warnings,
+    }
+
+
 def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dict[str, Any]:
     """Create normalized case from metadata + parsed plan result.
 
@@ -98,6 +137,19 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
                 "warnings": warnings,
             }
         )
+
+    if not normalized_interactions:
+        for entry in _coalesce_metadata_interactions(metadata):
+            normalized_interactions.append(
+                _normalize_metadata_interaction(
+                    entry=entry,
+                    metadata_activo=metadata_activo,
+                    metadata_seccion=metadata_seccion,
+                    metadata_plan_url=metadata_plan_url,
+                    metadata_target_url=metadata_target_url,
+                    metadata_page_path_regex=metadata_page_path_regex,
+                )
+            )
 
     return {
         "case_id": metadata.get("case_id"),
