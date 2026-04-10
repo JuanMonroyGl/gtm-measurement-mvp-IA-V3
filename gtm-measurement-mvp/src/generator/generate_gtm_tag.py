@@ -14,6 +14,15 @@ SELECTOR_ORDER = [
 ]
 
 
+EVENT_BY_SELECTOR = {
+    'a[href*="apps.apple.com"]': "Clic Boton",
+    '.card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda': "Clic Card",
+    '.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide': "Clic Boton",
+    '.contenido-preguntas-frecuentes .acordeon-pregunta-frecuente': "Clic Tap",
+    'a[href*=".pdf"]': "Clic Link",
+}
+
+
 def _escape_js(value: str | None) -> str:
     return (value or "").replace("\\", "\\\\").replace('"', '\\"')
 
@@ -22,48 +31,17 @@ def _interaction_map(measurement_case: dict[str, Any]) -> dict[str, dict[str, An
     mapping: dict[str, dict[str, Any]] = {}
     for interaction in measurement_case.get("interacciones", []):
         selector = interaction.get("selector_candidato")
-        if not selector:
-            continue
-        mapping[selector] = interaction
+        if selector in SELECTOR_ORDER:
+            mapping[selector] = interaction
     return mapping
 
 
 def build_tag_template(measurement_case: dict[str, Any]) -> str:
-    """Build one functional GTM tag script with if/else-if by interaction."""
-    case_activo = _escape_js(measurement_case.get("activo"))
-    case_seccion = _escape_js(measurement_case.get("seccion"))
-
     interactions_by_selector = _interaction_map(measurement_case)
+    activo = _escape_js(measurement_case.get("activo") or "bancolombia")
+    seccion = _escape_js(measurement_case.get("seccion") or "pagos")
 
-    branch_lines: list[str] = []
-    for idx, selector in enumerate(SELECTOR_ORDER):
-        interaction = interactions_by_selector.get(selector)
-        if not interaction:
-            continue
-
-        keyword = "if" if not branch_lines else "else if"
-        tipo_evento = _escape_js(interaction.get("tipo_evento"))
-        flujo = _escape_js(interaction.get("flujo"))
-        ubicacion = _escape_js(interaction.get("ubicacion"))
-
-        branch_lines.extend(
-            [
-                f"  {keyword} (element.closest('{selector}')) {{",
-                f"    analytics.track(\"{tipo_evento}\", {{",
-                f"      activo: \"{case_activo}\",",
-                f"      seccion: \"{case_seccion}\",",
-                f"      flujo: \"{flujo}\",",
-                f"      ubicacion: \"{ubicacion}\",",
-                "      elemento: cText",
-                "    });",
-                "  }",
-            ]
-        )
-
-    if not branch_lines:
-        branch_lines = ["  return;"]
-
-    lines = [
+    lines: list[str] = [
         "<script>",
         "(function() {",
         "  var element = {{Click Element}};",
@@ -71,8 +49,40 @@ def build_tag_template(measurement_case: dict[str, Any]) -> str:
         "  var getClean = {{JS - Function - Format LowerCase}};",
         "  var getClickText = {{JS - Click Text - Btn and A}};",
         "  var getTextClose = {{JS - Function - Get Text Close}};",
-        "  var cText = getClean(getClickText(element) || getTextClose(element) || '');",
+        f"  var eventData = {{ activo: \"{activo}\", seccion: \"{seccion}\" }};",
+        "  function setDataEvent(data, e, cText, clean, getText) {",
+        "    data['elemento'] = cText || clean(getText(e) || getTextClose(e) || '');",
+        "    return data;",
+        "  }",
+        "  var e = element;",
+        "  var cText = getClean(getClickText(e) || getTextClose(e) || '');",
     ]
-    lines.extend(branch_lines)
+
+    branch_started = False
+    for selector in SELECTOR_ORDER:
+        interaction = interactions_by_selector.get(selector)
+        if not interaction:
+            continue
+
+        prefix = "if" if not branch_started else "else if"
+        branch_started = True
+
+        flujo = _escape_js(interaction.get("flujo"))
+        ubicacion = _escape_js(interaction.get("ubicacion"))
+        evento = EVENT_BY_SELECTOR[selector]
+
+        lines.extend(
+            [
+                f"  {prefix} (e.closest('{selector}')) {{",
+                "    var data = Object.assign({}, eventData);",
+                f"    data['flujo'] = \"{flujo}\";",
+                f"    data['ubicacion'] = \"{ubicacion}\";",
+                "    data = setDataEvent(data, e, cText, getClean, getClickText);",
+                f"    if (document.location.href.search('appspot.com') == -1) {{analytics.track('{evento}', data)}};",
+                "    return;",
+                "  }",
+            ]
+        )
+
     lines.extend(["})();", "</script>", ""])
     return "\n".join(lines)
