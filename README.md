@@ -79,6 +79,14 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+### En caso de que no funcione el requirements.txt
+```bash
+python -m pip install rapidocr-onnxruntime==1.2.3 onnxruntime==1.24.4 opencv-python==4.13.0.92 beautifulsoup4==4.12.3 lxml==5.2.2
+```
+### Luego validar asi
+```bash
+python -c "import rapidocr_onnxruntime, onnxruntime, cv2; print('OCR OK'); print(cv2.__version__)"
+```
 
 ## Cómo ejecutar un caso
 Ejemplo con `case_001`:
@@ -155,6 +163,31 @@ python checks/compare_case_outputs_against_examples.py --case-id case_001 --repo
 - Robustecer extracción OCR para entornos heterogéneos.
 - Ampliar checks automáticos por tipo de evento.
 - Estandarizar criterios de aceptación previos a producción.
+- Incorporar una capa **asistida por IA** para resolver casos ambiguos en la selección de elementos del DOM.
+
+### Evolución asistida por IA
+La idea no es reemplazar el pipeline actual, sino complementarlo.
+
+Hoy el flujo usa:
+- OCR o fallback para extraer información del plan
+- reglas y heurísticas para proponer selectores
+- validación humana en GTM Preview
+
+La siguiente evolución lógica sería usar IA solo cuando haya ambigüedad, por ejemplo:
+- varios elementos parecidos en la página
+- textos similares en distintos bloques
+- componentes complejos donde un selector heurístico puede ser demasiado amplio o frágil
+
+En ese escenario, la IA ayudaría a:
+- priorizar el candidato correcto dentro del DOM
+- reducir ambigüedad en casos complejos
+- mejorar la calidad de los selectores propuestos
+
+El objetivo sería mantener un enfoque híbrido:
+- **reglas determinísticas** para los casos claros
+- **asistencia de IA** para los casos ambiguos
+
+Esto permitiría que el proyecto sea más robusto sin perder control técnico ni trazabilidad.
 
 ---
 
