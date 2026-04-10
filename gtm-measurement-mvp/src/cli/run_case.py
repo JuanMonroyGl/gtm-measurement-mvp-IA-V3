@@ -70,14 +70,6 @@ def ensure_output_dir(repo_root: Path, case_id: str) -> Path:
     return output_dir
 
 
-def _load_previous_measurement_case(output_dir: Path) -> dict[str, Any] | None:
-    previous_path = output_dir / "measurement_case.json"
-    if not previous_path.exists():
-        return None
-    with previous_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def _incomplete_fields(interaction: dict[str, Any]) -> list[str]:
     required = [
         "tipo_evento",
@@ -240,11 +232,11 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
     parsed_plan = parse_measurement_plan(images_dir)
     measurement_case = normalize_case(metadata=metadata, parsed_plan=parsed_plan)
 
-    # Keep existing interactions when OCR is unavailable and a prior case exists.
     if not measurement_case.get("interacciones"):
-        previous_case = _load_previous_measurement_case(output_dir)
-        if previous_case and previous_case.get("interacciones"):
-            measurement_case["interacciones"] = previous_case.get("interacciones", [])
+        raise RuntimeError(
+            f"No se detectaron interacciones para {case_id}. "
+            "Revisa OCR, image_evidence.json o metadata (interacciones/eventos) antes de generar GTM."
+        )
 
     target_url = measurement_case.get("target_url")
     fetch_result = fetch_html(target_url=target_url) if target_url else fetch_html(target_url="")
