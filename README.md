@@ -157,7 +157,7 @@ python checks/compare_case_outputs_against_examples.py --case-id case_001 --repo
 - **Selectores ambiguos**: revisar `report.md` y ajustar estrategia de selector en validación humana.
 - **Diferencias contra implementación previa**: comparar con `examples/` y documentar decisión en reporte.
 
-## Qué sigue a futuro (realista)
+## Qué sigue a futuro
 - Mejorar cobertura de casos y diversidad de layouts.
 - Endurecer validaciones automáticas de selectores y confidence.
 - Robustecer extracción OCR para entornos heterogéneos.
