@@ -13,6 +13,7 @@ No es un publicador automático en GTM ni una herramienta autoservicio final: es
 - ✅ OCR operativo cuando el entorno está listo.
 - ✅ Fallback por `image_evidence.json` cuando OCR no está disponible y existe evidencia previa.
 - ✅ Generación de artefactos clave (`measurement_case.json`, selectores, trigger, tag y reporte).
+- ✅ Validación activa de `measurement_case.json` contra `schemas/measurement_case.schema.json`.
 - ✅ Checks mínimos anti-regresión.
 - ✅ `case_001` validado manualmente como **golden case** en GTM Preview.
 - ✅ `case_002` disponible como segundo caso real para demostrar que el flujo no depende de un único caso.
@@ -36,7 +37,7 @@ Para un `case_id` en `inputs/`:
 - propone y valida selectores contra el DOM snapshot,
 - genera `trigger_selector.txt` consolidado,
 - genera `tag_template.js` funcional (patrón del proyecto),
-- genera `report.md` con evidencia, conflictos y warnings.
+- genera `report.md` con evidencia, conflictos, warnings y métricas agregadas del caso.
 
 ## Flujo general del proyecto
 1. **Entrada del caso**: `inputs/<case_id>/images/` + `inputs/<case_id>/metadata.json`.
@@ -44,9 +45,10 @@ Para un `case_id` en `inputs/`:
 3. **Fallback opcional**: si OCR falla/no está disponible, usar `inputs/<case_id>/image_evidence.json` (si existe).
 4. **Normalización**: construcción de `measurement_case.json`.
 5. **Scraping/DOM**: captura y análisis para proponer selectores.
-6. **Generación**: `trigger_selector.txt` + `tag_template.js`.
-7. **Reporte**: `report.md` con matches, supuestos y alertas.
-8. **Validación humana**: revisión técnica + GTM Preview antes de producción.
+6. **Validación de contrato**: `measurement_case.json` debe cumplir schema JSON.
+7. **Generación**: `trigger_selector.txt` + `tag_template.js`.
+8. **Reporte**: `report.md` con matches, supuestos y alertas.
+9. **Validación humana**: revisión técnica + GTM Preview antes de producción.
 
 ## Estructura del repositorio
 ```text

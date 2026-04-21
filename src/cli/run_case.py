@@ -15,6 +15,8 @@ from src.scraper.fetch_page import fetch_html
 from src.scraper.snapshot_dom import build_dom_snapshot
 from src.selectors.build_selectors import propose_selectors
 from src.selectors.validate_selectors import validate_selector_candidates
+from src.validation.case_metrics import compute_case_metrics
+from src.validation.schema_validation import SchemaValidationResult, validate_measurement_case_schema
 
 
 
@@ -98,6 +100,8 @@ def _render_report(
     dom_warning: str | None,
     selector_build_result: dict[str, Any],
     selector_validation: dict[str, Any],
+    schema_validation: SchemaValidationResult,
+    case_metrics: dict[str, Any],
 ) -> str:
     lines = [
         f"# Reporte {case_id}",
@@ -153,6 +157,23 @@ def _render_report(
         evidence = next((e for e in selector_evidence if e.get("index") == idx), None)
         if evidence and evidence.get("evidence"):
             lines.append(f"  - evidencia_selector: {evidence.get('evidence')}")
+        if evidence and evidence.get("selection_trace"):
+            trace = evidence.get("selection_trace") or {}
+            lines.append("  - trace_selector:")
+            lines.append(f"    - kind: {trace.get('kind')}")
+            lines.append(f"    - candidates_considered: {trace.get('candidates_considered')}")
+            lines.append(f"    - selected_reason: {trace.get('selected_reason')}")
+            top_candidates = trace.get("top_candidates") or []
+            for rank, candidate in enumerate(top_candidates, start=1):
+                stability = candidate.get("stability") or {}
+                lines.append(
+                    "    - "
+                    f"candidate_{rank}: selector={candidate.get('selector')}; "
+                    f"score={candidate.get('ranking_score')}; "
+                    f"token_matches={candidate.get('token_match_count')}; "
+                    f"primary_stability={stability.get('primary')}; "
+                    f"matched_tokens={candidate.get('matched_tokens')}"
+                )
 
         for warning in interaction.get("warnings", []):
             lines.append(f"  - warning: {warning}")
@@ -178,6 +199,27 @@ def _render_report(
             lines.append(
                 f"- {interaction.get('tipo_evento')} usa selector de grupo válido con {match_count} matches en la sección esperada."
             )
+
+    lines.extend([
+        "",
+        "## Métricas agregadas del caso",
+        f"- total_interactions: {case_metrics.get('total_interactions')}",
+        f"- interactions_with_selector: {case_metrics.get('interactions_with_selector')}",
+        f"- match_count_0: {case_metrics.get('match_count_0')}",
+        f"- match_count_1: {case_metrics.get('match_count_1')}",
+        f"- match_count_gt_1: {case_metrics.get('match_count_gt_1')}",
+        f"- ambiguity_rate: {case_metrics.get('ambiguity_rate')}",
+        f"- interactions_with_warnings: {case_metrics.get('interactions_with_warnings')}",
+        f"- total_warnings: {case_metrics.get('total_warnings')}",
+        "",
+        "## Validación de schema",
+        f"- schema_path: {schema_validation.schema_path}",
+        f"- valid: {schema_validation.valid}",
+    ])
+    if schema_validation.errors:
+        lines.append("- errors:")
+        for error in schema_validation.errors:
+            lines.append(f"  - {error}")
 
     lines.extend([
         "",
@@ -255,6 +297,15 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
     )
+    case_metrics = compute_case_metrics(measurement_case)
+    schema_validation = validate_measurement_case_schema(repo_root=repo_root, measurement_case=measurement_case)
+    if not schema_validation.valid:
+        details = "\n".join(f"- {err}" for err in schema_validation.errors)
+        raise RuntimeError(
+            "measurement_case.json no cumple el schema del proyecto.\n"
+            f"Schema: {schema_validation.schema_path}\n"
+            f"{details}"
+        )
 
     tag_template = build_tag_template(measurement_case)
     trigger_selector = build_consolidated_trigger_selector(measurement_case)
@@ -278,6 +329,8 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         dom_warning=dom_snapshot.warning,
         selector_build_result=selector_build_result,
         selector_validation=selector_validation,
+        schema_validation=schema_validation,
+        case_metrics=case_metrics,
     )
     report_path.write_text(report_text, encoding="utf-8")
 
