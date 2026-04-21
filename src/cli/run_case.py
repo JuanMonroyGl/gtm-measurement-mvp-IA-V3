@@ -15,6 +15,7 @@ from src.scraper.fetch_page import fetch_html
 from src.scraper.snapshot_dom import build_dom_snapshot
 from src.selectors.build_selectors import propose_selectors
 from src.selectors.validate_selectors import validate_selector_candidates
+from src.validation.case_metrics import compute_case_metrics
 from src.validation.schema_validation import SchemaValidationResult, validate_measurement_case_schema
 
 
@@ -100,6 +101,7 @@ def _render_report(
     selector_build_result: dict[str, Any],
     selector_validation: dict[str, Any],
     schema_validation: SchemaValidationResult,
+    case_metrics: dict[str, Any],
 ) -> str:
     lines = [
         f"# Reporte {case_id}",
@@ -200,6 +202,16 @@ def _render_report(
 
     lines.extend([
         "",
+        "## Métricas agregadas del caso",
+        f"- total_interactions: {case_metrics.get('total_interactions')}",
+        f"- interactions_with_selector: {case_metrics.get('interactions_with_selector')}",
+        f"- match_count_0: {case_metrics.get('match_count_0')}",
+        f"- match_count_1: {case_metrics.get('match_count_1')}",
+        f"- match_count_gt_1: {case_metrics.get('match_count_gt_1')}",
+        f"- ambiguity_rate: {case_metrics.get('ambiguity_rate')}",
+        f"- interactions_with_warnings: {case_metrics.get('interactions_with_warnings')}",
+        f"- total_warnings: {case_metrics.get('total_warnings')}",
+        "",
         "## Validación de schema",
         f"- schema_path: {schema_validation.schema_path}",
         f"- valid: {schema_validation.valid}",
@@ -285,6 +297,7 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
     )
+    case_metrics = compute_case_metrics(measurement_case)
     schema_validation = validate_measurement_case_schema(repo_root=repo_root, measurement_case=measurement_case)
     if not schema_validation.valid:
         details = "\n".join(f"- {err}" for err in schema_validation.errors)
@@ -317,6 +330,7 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         selector_build_result=selector_build_result,
         selector_validation=selector_validation,
         schema_validation=schema_validation,
+        case_metrics=case_metrics,
     )
     report_path.write_text(report_text, encoding="utf-8")
 

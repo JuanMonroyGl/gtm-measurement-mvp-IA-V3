@@ -22,6 +22,7 @@ def _assert(condition: bool, message: str) -> None:
 def check_case_outputs(repo_root: Path, case_id: str) -> None:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
+    from src.validation.case_metrics import compute_case_metrics
     from src.validation.schema_validation import validate_measurement_case_schema
 
     output_dir = repo_root / "outputs" / case_id
@@ -62,6 +63,13 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
                 selector_activador == expected,
                 f"interaction[{idx}] selector_activador should match consolidated pattern",
             )
+
+    metrics = compute_case_metrics(measurement_case)
+    _assert(metrics["total_interactions"] == len(interactions), "metrics total_interactions mismatch")
+    _assert(
+        metrics["match_count_0"] + metrics["match_count_1"] + metrics["match_count_gt_1"] <= len(interactions),
+        "metrics match_count buckets are inconsistent",
+    )
 
     tag_template = tag_template_path.read_text(encoding="utf-8")
     _assert(tag_template.strip() != "", "tag_template.js is empty")

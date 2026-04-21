@@ -37,7 +37,7 @@ Para un `case_id` en `inputs/`:
 - propone y valida selectores contra el DOM snapshot,
 - genera `trigger_selector.txt` consolidado,
 - genera `tag_template.js` funcional (patrón del proyecto),
-- genera `report.md` con evidencia, conflictos y warnings.
+- genera `report.md` con evidencia, conflictos, warnings y métricas agregadas del caso.
 
 ## Flujo general del proyecto
 1. **Entrada del caso**: `inputs/<case_id>/images/` + `inputs/<case_id>/metadata.json`.
