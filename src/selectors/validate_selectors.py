@@ -7,21 +7,6 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 
-EXPECTED_GROUP_SELECTORS = {
-    ".card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda",
-    ".contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide",
-    ".contenido-preguntas-frecuentes .acordeon-pregunta-frecuente",
-}
-
-
-def _is_expected_group_selector(selector: str, interaction: dict[str, Any]) -> bool:
-    if selector in EXPECTED_GROUP_SELECTORS:
-        return True
-
-    elemento = (interaction.get("elemento") or "").lower()
-    return "{{texto del" in elemento and selector in EXPECTED_GROUP_SELECTORS
-
-
 def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot: dict[str, Any]) -> dict[str, Any]:
     """Compute match_count and warnings honoring valid multi-match groups."""
     html = dom_snapshot.get("rendered_dom_html") or dom_snapshot.get("raw_html")
@@ -35,8 +20,9 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
     soup = BeautifulSoup(html, "lxml")
     validated = 0
     warnings: list[str] = []
+    selector_to_indices: dict[str, list[int]] = {}
 
-    for interaction in measurement_case.get("interacciones", []):
+    for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         selector = interaction.get("selector_candidato")
         interaction.setdefault("warnings", [])
         interaction["warnings"] = [
@@ -57,22 +43,30 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
             match_count = len(matches)
             interaction["match_count"] = match_count
             validated += 1
+            selector_to_indices.setdefault(selector, []).append(idx)
 
             if match_count == 0:
                 interaction["warnings"].append("selector_candidato no encontró elementos en el DOM.")
             elif match_count > 1:
-                if _is_expected_group_selector(selector, interaction):
-                    interaction["warnings"].append(
-                        f"selector_candidato retornó {match_count} matches y es válido como grupo esperado en la sección."
-                    )
-                else:
-                    interaction["warnings"].append(
-                        f"selector_candidato retornó {match_count} matches (posible ambigüedad)."
-                    )
+                interaction["warnings"].append(
+                    f"selector_candidato '{selector}' retornó {match_count} matches "
+                    "(posible ambigüedad: revisar evidencia de selección y texto de referencia)."
+                )
         except Exception as exc:
             interaction["match_count"] = None
             interaction["warnings"].append(f"Error al validar selector: {exc}")
             warnings.append(f"Selector inválido detectado: {selector}")
+
+    for selector, indices in selector_to_indices.items():
+        if len(indices) <= 1:
+            continue
+        warning_text = (
+            f"selector_candidato compartido '{selector}' en interacciones {indices}; "
+            "riesgo de ramas muertas en if/else if del tag si no hay discriminador adicional."
+        )
+        warnings.append(warning_text)
+        for idx in indices:
+            measurement_case["interacciones"][idx - 1]["warnings"].append(warning_text)
 
     return {
         "status": "ok",
