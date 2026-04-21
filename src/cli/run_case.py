@@ -155,6 +155,23 @@ def _render_report(
         evidence = next((e for e in selector_evidence if e.get("index") == idx), None)
         if evidence and evidence.get("evidence"):
             lines.append(f"  - evidencia_selector: {evidence.get('evidence')}")
+        if evidence and evidence.get("selection_trace"):
+            trace = evidence.get("selection_trace") or {}
+            lines.append("  - trace_selector:")
+            lines.append(f"    - kind: {trace.get('kind')}")
+            lines.append(f"    - candidates_considered: {trace.get('candidates_considered')}")
+            lines.append(f"    - selected_reason: {trace.get('selected_reason')}")
+            top_candidates = trace.get("top_candidates") or []
+            for rank, candidate in enumerate(top_candidates, start=1):
+                stability = candidate.get("stability") or {}
+                lines.append(
+                    "    - "
+                    f"candidate_{rank}: selector={candidate.get('selector')}; "
+                    f"score={candidate.get('ranking_score')}; "
+                    f"token_matches={candidate.get('token_match_count')}; "
+                    f"primary_stability={stability.get('primary')}; "
+                    f"matched_tokens={candidate.get('matched_tokens')}"
+                )
 
         for warning in interaction.get("warnings", []):
             lines.append(f"  - warning: {warning}")

@@ -93,42 +93,102 @@ def _element_text_for_matching(element: Tag) -> str:
     return _normalize(" ".join(parts))
 
 
-def _best_matching_element(
-    interaction: dict[str, Any], candidates: list[Tag]
-) -> tuple[Tag | None, int]:
-    tokens = []
+def _stability_signals(element: Tag) -> dict[str, Any]:
+    data_attrs = sorted([k for k in element.attrs if str(k).startswith("data-")])
+    aria_attrs = [k for k in ("aria-label", "aria-controls", "aria-labelledby") if element.get(k)]
+    classes = element.get("class") or []
+    stable_classes = [c for c in classes if len(c) > 3 and not c.startswith("swiper-")]
+
+    if element.get("id"):
+        primary = "id"
+    elif data_attrs:
+        primary = "data-*"
+    elif aria_attrs:
+        primary = "aria-*"
+    elif stable_classes:
+        primary = "stable_class"
+    else:
+        primary = "none"
+
+    stability_score = (
+        (100 if element.get("id") else 0)
+        + (40 if data_attrs else 0)
+        + (20 if aria_attrs else 0)
+        + min(len(stable_classes), 2) * 5
+    )
+    return {
+        "primary": primary,
+        "has_id": bool(element.get("id")),
+        "data_attrs": data_attrs[:3],
+        "aria_attrs": aria_attrs[:3],
+        "stable_classes": stable_classes[:3],
+        "stability_score": stability_score,
+    }
+
+
+def _candidate_trace(
+    *,
+    element: Tag,
+    kind: str,
+    tokens: list[str],
+) -> dict[str, Any]:
+    haystack = _element_text_for_matching(element)
+    matched_tokens = [token for token in tokens if token in haystack]
+    selector = _selector_from_element(element)
+    signals = _stability_signals(element)
+    ranking_score = len(matched_tokens) * 10 + int(signals["stability_score"])
+    text_preview = _normalize(" ".join(element.get_text(" ", strip=True).split()))[:120]
+
+    return {
+        "kind": kind,
+        "selector": selector,
+        "matched_tokens": matched_tokens[:6],
+        "token_match_count": len(matched_tokens),
+        "stability": signals,
+        "ranking_score": ranking_score,
+        "text_preview": text_preview,
+    }
+
+
+def _rank_candidates(interaction: dict[str, Any], candidates: list[Tag], kind: str) -> list[dict[str, Any]]:
+    tokens: list[str] = []
     for field in ("texto_referencia", "elemento", "ubicacion", "flujo"):
         tokens.extend(_tokenize(interaction.get(field)))
-    if not tokens:
-        return (candidates[0], 0) if candidates else (None, 0)
 
-    best: Tag | None = None
-    best_score = 0
-    for el in candidates:
-        haystack = _element_text_for_matching(el)
-        if not haystack:
-            continue
-        score = sum(1 for token in tokens if token in haystack)
-        if score > best_score:
-            best = el
-            best_score = score
-    return best, best_score
+    traces = [_candidate_trace(element=el, kind=kind, tokens=tokens) for el in candidates]
+    traces = [trace for trace in traces if trace.get("selector")]
+    traces.sort(
+        key=lambda trace: (
+            int(trace.get("ranking_score", 0)),
+            int(trace.get("token_match_count", 0)),
+            int((trace.get("stability") or {}).get("stability_score", 0)),
+        ),
+        reverse=True,
+    )
+    return traces
 
 
 def _preferred_selector(interaction: dict[str, Any], soup: BeautifulSoup) -> tuple[str | None, str | None]:
     """Prefer stable selectors from best candidate using neutral text/attribute matching."""
     kind = _interaction_kind(interaction)
     candidates = _candidate_elements(kind, soup)
-    best, score = _best_matching_element(interaction, candidates)
-    if not best:
+    ranked = _rank_candidates(interaction, candidates, kind=kind)
+    if not ranked:
         return None, None
-    selector = _selector_from_element(best)
+    best = ranked[0]
+    selector = best.get("selector")
     if not selector:
         return None, None
+    stability = best.get("stability") or {}
+    score = best.get("token_match_count", 0)
     evidence = (
-        f"selector por atributos estables y coincidencia textual (kind={kind}, score={score})"
+        "selector priorizado por score combinado "
+        f"(kind={kind}, token_matches={score}, primary_stability={stability.get('primary')})"
         if score > 0
-        else f"selector por atributo estable sin coincidencia textual fuerte (kind={kind})"
+        else (
+            "selector priorizado por estabilidad de atributo sin coincidencia textual fuerte "
+            f"(kind={kind}, primary_stability={stability.get('primary')})"
+        )
     )
     return selector, evidence
 
@@ -199,6 +259,9 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
         interaction["warnings"] = [w for w in interaction.get("warnings", []) if "selector_candidato" not in w and "No se encontró selector" not in w]
 
         selector, evidence = _preferred_selector(interaction, soup)
+        kind = _interaction_kind(interaction)
+        candidate_pool = _candidate_elements(kind, soup)
+        ranked_candidates = _rank_candidates(interaction, candidate_pool, kind=kind)
         if not selector:
             selector, evidence = _fallback_selector(interaction, soup)
 
@@ -206,7 +269,20 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
             interaction["selector_candidato"] = None
             interaction["selector_activador"] = None
             interaction["warnings"].append("No se encontró selector con evidencia suficiente.")
-            selector_evidence.append({"index": index, "tipo_evento": interaction.get("tipo_evento"), "selector": None, "evidence": None})
+            selector_evidence.append(
+                {
+                    "index": index,
+                    "tipo_evento": interaction.get("tipo_evento"),
+                    "selector": None,
+                    "evidence": None,
+                    "selection_trace": {
+                        "kind": kind,
+                        "candidates_considered": len(candidate_pool),
+                        "top_candidates": ranked_candidates[:3],
+                        "selected_reason": "No hubo candidato con selector estable disponible.",
+                    },
+                }
+            )
             continue
 
         interaction["selector_candidato"] = selector
@@ -225,6 +301,12 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
                 "tipo_evento": interaction.get("tipo_evento"),
                 "selector": selector,
                 "evidence": evidence,
+                "selection_trace": {
+                    "kind": kind,
+                    "candidates_considered": len(candidate_pool),
+                    "top_candidates": ranked_candidates[:3],
+                    "selected_reason": evidence,
+                },
             }
         )
 

@@ -47,7 +47,8 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
                 interaction["warnings"].append("selector_candidato no encontró elementos en el DOM.")
             elif match_count > 1:
                 interaction["warnings"].append(
-                    f"selector_candidato retornó {match_count} matches (posible ambigüedad)."
+                    f"selector_candidato '{selector}' retornó {match_count} matches "
+                    "(posible ambigüedad: revisar evidencia de selección y texto de referencia)."
                 )
         except Exception as exc:
             interaction["match_count"] = None
