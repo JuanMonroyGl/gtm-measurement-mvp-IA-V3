@@ -7,16 +7,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from output_generation.generate_gtm_tag import build_tag_template
-from output_generation.generate_trigger import build_consolidated_trigger_selector
-from plan_reader.extract_plan_from_images import get_ocr_runtime_status, parse_measurement_plan
-from plan_reader.normalize_plan import normalize_case
-from web_scraping.fetch_page import fetch_html
-from web_scraping.snapshot_dom import build_dom_snapshot
-from processing.selectors.build_selectors import propose_selectors
-from processing.selectors.validate_selectors import validate_selector_candidates
-from processing.validation.case_metrics import compute_case_metrics
-from processing.validation.schema_validation import SchemaValidationResult, validate_measurement_case_schema
+from core.output_generation.generate_gtm_tag import build_tag_template
+from core.output_generation.generate_trigger import build_consolidated_trigger_selector
+from core.plan_reader.extract_plan_from_images import get_ocr_runtime_status, parse_measurement_plan
+from core.plan_reader.normalize_plan import normalize_case
+from core.web_scraping.fetch_page import fetch_html
+from core.web_scraping.snapshot_dom import build_dom_snapshot
+from core.processing.selectors.build_selectors import propose_selectors
+from core.processing.selectors.validate_selectors import validate_selector_candidates
+from core.processing.validation.case_metrics import compute_case_metrics
+from core.processing.validation.schema_validation import SchemaValidationResult, validate_measurement_case_schema
 
 
 

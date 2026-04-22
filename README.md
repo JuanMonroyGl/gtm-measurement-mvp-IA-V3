@@ -9,11 +9,11 @@ No es un publicador automático en GTM ni una herramienta autoservicio final: es
 
 ## Estado actual del MVP
 - ✅ Estructura del repo aplanada en la **raíz** (sin carpeta anidada adicional).
-- ✅ Pipeline ejecutable por caso desde `main.py` (con wrapper temporal en `src/cli/run_case.py`).
+- ✅ Pipeline ejecutable por caso desde `main.py` (con wrapper temporal en `core/cli/run_case.py`).
 - ✅ OCR operativo cuando el entorno está listo.
 - ✅ Fallback por `image_evidence.json` cuando OCR no está disponible y existe evidencia previa.
 - ✅ Generación de artefactos clave (`measurement_case.json`, selectores, trigger, tag y reporte).
-- ✅ Validación activa de `measurement_case.json` contra `schemas/measurement_case.schema.json`.
+- ✅ Validación activa de `measurement_case.json` contra `assets/schemas/measurement_case.schema.json`.
 - ✅ Checks mínimos anti-regresión.
 - ✅ `case_001` validado manualmente como **golden case** en GTM Preview.
 - ✅ `case_002` disponible como segundo caso real para demostrar que el flujo no depende de un único caso.
@@ -56,20 +56,23 @@ Para un `case_id` en `inputs/`:
 ├── main.py
 ├── README.md
 ├── requirements.txt
+├── .gitignore
 ├── inputs/
-├── outputs/                  # se crea/actualiza al ejecutar casos
-├── plan_reader/
-├── web_scraping/
-├── processing/
-│   ├── selectors/
-│   └── validation/
-├── output_generation/
-├── templates/
-├── examples/
-├── ai/
-├── checks/
-├── schemas/
-└── src/cli/run_case.py       # wrapper temporal de compatibilidad
+├── core/
+│   ├── ai/
+│   ├── checks/
+│   ├── cli/run_case.py       # wrapper temporal de compatibilidad
+│   ├── output_generation/
+│   ├── plan_reader/
+│   ├── processing/
+│   │   ├── selectors/
+│   │   └── validation/
+│   └── web_scraping/
+├── assets/
+│   ├── examples/
+│   ├── schemas/
+│   └── templates/
+└── outputs/                  # se crea/actualiza al ejecutar casos
 ```
 
 ## Requisitos
@@ -100,7 +103,7 @@ python main.py --case-id case_001 --repo-root .
 
 Compatibilidad temporal (legacy):
 ```bash
-python -m src.cli.run_case --case-id case_001 --repo-root .
+python -m core.cli.run_case --case-id case_001 --repo-root .
 ```
 
 El mismo flujo aplica para otros casos reales, por ejemplo `case_002`:
@@ -143,28 +146,28 @@ Después de ejecutar un caso, se espera:
 
 ## Benchmarks manuales por caso
 Cuando existen implementaciones/manuales de referencia, usar:
-- `examples/case_XXX_expected_tag.js`
-- `examples/case_XXX_expected_trigger.txt`
-- `examples/case_XXX_notes.md`
+- `assets/examples/case_XXX_expected_tag.js`
+- `assets/examples/case_XXX_expected_trigger.txt`
+- `assets/examples/case_XXX_notes.md`
 
 Estos archivos sirven para comparar resultados, detectar desviaciones y acelerar debugging. Son **referencia útil**, no fuente absoluta por encima del plan/metadata/DOM real.
 
 ## Checks mínimos
 Check base anti-regresión por caso:
 ```bash
-python checks/check_case_output.py --case-id case_001 --repo-root .
+python core/checks/check_case_output.py --case-id case_001 --repo-root .
 ```
 
-Comparación contra benchmark manual (`examples/`):
+Comparación contra benchmark manual (`assets/examples/`):
 ```bash
-python checks/compare_case_outputs_against_examples.py --case-id case_001 --repo-root .
+python core/checks/compare_case_outputs_against_examples.py --case-id case_001 --repo-root .
 ```
 
 ## Troubleshooting (rápido)
 - **Falla OCR al importar librerías**: corre preflight con `--inspect-only` y revisa `ocr_diagnostic`.
 - **Sin OCR y sin fallback**: el pipeline debe fallar temprano; agrega/corrige `image_evidence.json` o habilita OCR.
 - **Selectores ambiguos**: revisar `report.md` y ajustar estrategia de selector en validación humana.
-- **Diferencias contra implementación previa**: comparar con `examples/` y documentar decisión en reporte.
+- **Diferencias contra implementación previa**: comparar con `assets/examples/` y documentar decisión en reporte.
 
 ## Qué sigue a futuro
 - Mejorar cobertura de casos y diversidad de layouts.
