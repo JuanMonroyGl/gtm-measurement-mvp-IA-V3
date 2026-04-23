@@ -1,4 +1,4 @@
-"""Validate selector candidates against DOM snapshot."""
+"""Validate selector candidates against DOM snapshot and observed inventory."""
 
 from __future__ import annotations
 
@@ -7,66 +7,70 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 
-def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Compute match_count and warnings honoring valid multi-match groups."""
-    html = dom_snapshot.get("rendered_dom_html") or dom_snapshot.get("raw_html")
-    if not html:
+def validate_selector_candidates(
+    measurement_case: dict[str, Any],
+    dom_snapshot: dict[str, Any],
+    selector_evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    state_html = dom_snapshot.get("state_html") or {}
+    if not state_html:
         return {
             "status": "no_dom",
             "validated_interactions": 0,
             "warnings": ["No hay DOM disponible para validar selectores."],
         }
 
-    soup = BeautifulSoup(html, "lxml")
+    selector_origin_by_index = {
+        int(item.get("index")): str(item.get("selector_origin"))
+        for item in (selector_evidence or [])
+        if item.get("index")
+    }
+
     validated = 0
     warnings: list[str] = []
-    selector_to_indices: dict[str, list[int]] = {}
+
+    # validate against best state count
+    soups = {state: BeautifulSoup(html, "lxml") for state, html in state_html.items()}
 
     for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         selector = interaction.get("selector_candidato")
         interaction.setdefault("warnings", [])
-        interaction["warnings"] = [
-            w
-            for w in interaction.get("warnings", [])
-            if "selector_candidato" not in w
-            and "Error al validar selector" not in w
-            and "Sin selector_candidato" not in w
-        ]
+
+        if selector_origin_by_index.get(idx) != "observed_in_dom":
+            interaction["selector_candidato"] = None
+            interaction["selector_activador"] = None
+            interaction["match_count"] = None
+            interaction["warnings"].append(
+                "Selector rechazado por no estar observado en DOM renderizado; human_review_required=true."
+            )
+            continue
 
         if not selector:
             interaction["match_count"] = None
-            interaction["warnings"].append("Sin selector_candidato; no se puede validar match_count.")
+            interaction["warnings"].append("Sin selector_candidato observado; no se valida match_count.")
             continue
 
-        try:
-            matches = soup.select(selector)
-            match_count = len(matches)
-            interaction["match_count"] = match_count
-            validated += 1
-            selector_to_indices.setdefault(selector, []).append(idx)
+        match_count = 0
+        for soup in soups.values():
+            try:
+                match_count = max(match_count, len(soup.select(selector)))
+            except Exception as exc:
+                warnings.append(f"Selector inválido detectado: {selector} ({exc})")
 
-            if match_count == 0:
-                interaction["warnings"].append("selector_candidato no encontró elementos en el DOM.")
-            elif match_count > 1:
-                interaction["warnings"].append(
-                    f"selector_candidato '{selector}' retornó {match_count} matches "
-                    "(posible ambigüedad: revisar evidencia de selección y texto de referencia)."
-                )
-        except Exception as exc:
+        interaction["match_count"] = match_count if match_count > 0 else None
+        validated += 1
+
+        if match_count == 0:
+            interaction["selector_candidato"] = None
+            interaction["selector_activador"] = None
             interaction["match_count"] = None
-            interaction["warnings"].append(f"Error al validar selector: {exc}")
-            warnings.append(f"Selector inválido detectado: {selector}")
-
-    for selector, indices in selector_to_indices.items():
-        if len(indices) <= 1:
-            continue
-        warning_text = (
-            f"selector_candidato compartido '{selector}' en interacciones {indices}; "
-            "riesgo de ramas muertas en if/else if del tag si no hay discriminador adicional."
-        )
-        warnings.append(warning_text)
-        for idx in indices:
-            measurement_case["interacciones"][idx - 1]["warnings"].append(warning_text)
+            interaction["warnings"].append(
+                "Selector no encontró matches en estados renderizados; se deja null y human_review_required=true."
+            )
+        elif match_count > 1:
+            interaction["warnings"].append(
+                f"Selector observado pero ambiguo ({match_count} matches); se requiere revisión humana."
+            )
 
     return {
         "status": "ok",
