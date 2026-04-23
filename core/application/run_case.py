@@ -19,8 +19,8 @@ from core.processing.selectors.build_selectors import propose_selectors
 from core.processing.selectors.validate_selectors import validate_selector_candidates
 from core.processing.validation.case_metrics import compute_case_metrics
 from core.processing.validation.schema_validation import validate_measurement_case_schema
-from core.web_scraping.fetch_page import fetch_html
-from core.web_scraping.snapshot_dom import build_dom_snapshot
+from web_scraping.fetch_page import fetch_html
+from web_scraping.snapshot_dom import build_dom_snapshot
 
 
 def ensure_output_dir(repo_root: Path, case_id: str) -> Path:
@@ -50,7 +50,12 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             f"Sugerencia: {hint}"
         )
 
-    resolved_case = resolve_case_input(context)
+    intake = input_check.get("intake") or {}
+    prepared_images_dir = intake.get("prepared_images_dir")
+    if not prepared_images_dir:
+        raise UserFacingError("No existe prepared_assets/images para continuar el pipeline.")
+
+    resolved_case = resolve_case_input(context, images_dir=Path(prepared_images_dir))
     metadata = resolved_case["resolved_metadata"]
     output_dir = ensure_output_dir(context.repo_root, context.case_id)
 
@@ -160,6 +165,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         status="warning" if warning_messages else "success",
         warning_messages=warning_messages,
         outputs_generated={
+            "asset_manifest": str((Path(prepared_images_dir).parent / "asset_manifest.json")),
             "measurement_case": str(measurement_case_path),
             "tag_template": str(tag_template_path),
             "trigger_selector": str(trigger_selector_path),
