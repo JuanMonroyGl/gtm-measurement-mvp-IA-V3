@@ -84,6 +84,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     selector_validation = validate_selector_candidates(
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
+        selector_evidence=selector_build_result.get("selector_evidence"),
     )
     case_metrics = compute_case_metrics(measurement_case)
     schema_validation = validate_measurement_case_schema(repo_root=context.repo_root, measurement_case=measurement_case)
@@ -104,11 +105,35 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     report_path = output_dir / "report.md"
     resolved_case_input_path = output_dir / "resolved_case_input.json"
     run_summary_path = output_dir / "run_summary.json"
+    clickable_inventory_path = output_dir / "clickable_inventory.json"
+    selector_trace_path = output_dir / "selector_trace.json"
 
     with measurement_case_path.open("w", encoding="utf-8") as f:
         json.dump(measurement_case, f, ensure_ascii=False, indent=2)
 
     tag_template_path.write_text(tag_template, encoding="utf-8")
+    clickable_inventory_path.write_text(
+        json.dumps(
+            {
+                "states_captured": dom_snapshot.states_captured,
+                "render_engine": dom_snapshot.render_engine,
+                "items": dom_snapshot.clickable_inventory or [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    selector_trace_path.write_text(
+        json.dumps(
+            {
+                "selector_evidence": selector_build_result.get("selector_evidence") or [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     trigger_selector_path.write_text(trigger_selector, encoding="utf-8")
     resolved_case_input_path.write_text(
         json.dumps(
@@ -167,6 +192,8 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         outputs_generated={
             "asset_manifest": str((Path(prepared_images_dir).parent / "asset_manifest.json")),
             "measurement_case": str(measurement_case_path),
+            "clickable_inventory": str(clickable_inventory_path),
+            "selector_trace": str(selector_trace_path),
             "tag_template": str(tag_template_path),
             "trigger_selector": str(trigger_selector_path),
             "report": str(report_path),
@@ -184,6 +211,8 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         "case_id": context.case_id,
         "output_dir": str(output_dir),
         "measurement_case": str(measurement_case_path),
+        "clickable_inventory": str(clickable_inventory_path),
+        "selector_trace": str(selector_trace_path),
         "tag_template": str(tag_template_path),
         "trigger_selector": str(trigger_selector_path),
         "report": str(report_path),

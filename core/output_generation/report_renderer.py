@@ -71,6 +71,7 @@ def render_report(
         "",
         "## DOM usado para validación",
         f"- render_engine: {selector_build_result.get('render_engine')}",
+        f"- clickable_inventory_items: {len((selector_build_result.get('clickable_inventory') or []))}",
         "",
         "## Interacciones detectadas",
         f"- total: {len(measurement_case.get('interacciones', []))}",
@@ -90,25 +91,17 @@ def render_report(
         lines.append(f"  - confidence: {interaction.get('confidence')}")
 
         evidence = next((e for e in selector_evidence if e.get("index") == idx), None)
-        if evidence and evidence.get("evidence"):
-            lines.append(f"  - evidencia_selector: {evidence.get('evidence')}")
-        if evidence and evidence.get("selection_trace"):
-            trace = evidence.get("selection_trace") or {}
-            lines.append("  - trace_selector:")
-            lines.append(f"    - kind: {trace.get('kind')}")
-            lines.append(f"    - candidates_considered: {trace.get('candidates_considered')}")
-            lines.append(f"    - selected_reason: {trace.get('selected_reason')}")
-            top_candidates = trace.get("top_candidates") or []
-            for rank, candidate in enumerate(top_candidates, start=1):
-                stability = candidate.get("stability") or {}
-                lines.append(
-                    "    - "
-                    f"candidate_{rank}: selector={candidate.get('selector')}; "
-                    f"score={candidate.get('ranking_score')}; "
-                    f"token_matches={candidate.get('token_match_count')}; "
-                    f"primary_stability={stability.get('primary')}; "
-                    f"matched_tokens={candidate.get('matched_tokens')}"
-                )
+        if evidence:
+            lines.append(f"  - selector_origin: {evidence.get('selector_origin')}")
+            lines.append(f"  - human_review_required: {evidence.get('human_review_required')}")
+            chosen = evidence.get("chosen") or {}
+            if chosen:
+                lines.append(f"  - dom_state: {chosen.get('state')}")
+                lines.append(f"  - dom_match_count: {chosen.get('match_count')}")
+                lines.append(f"  - uniqueness: {chosen.get('uniqueness_explanation')}")
+                lines.append(f"  - closest_supported: {chosen.get('closest_supported')}")
+                lines.append(f"  - outer_html_excerpt: {chosen.get('outer_html_excerpt')}")
+                lines.append(f"  - matched_tokens: {chosen.get('matched_tokens')}")
 
         for warning in interaction.get("warnings", []):
             lines.append(f"  - warning: {warning}")
@@ -162,6 +155,7 @@ def render_report(
         f"- dom_warning: {dom_warning}",
         "",
         "## Selectores",
+        "- policy: solo observed_in_dom puede promoverse a selector final",
         f"- build_status: {selector_build_result.get('status')}",
         f"- validation_status: {selector_validation.get('status')}",
         f"- validated_interactions: {selector_validation.get('validated_interactions')}",

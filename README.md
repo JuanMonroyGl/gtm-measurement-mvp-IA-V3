@@ -98,3 +98,15 @@ Nuevas dependencias clave:
 - `.ppt` no soportado.
 - Si no hay `target_url` resoluble desde metadata o evidencia textual, el caso falla con error claro.
 - Render visual de PPTX depende de LibreOffice; sin LibreOffice se continúa solo con texto nativo.
+
+
+## Endurecimiento de selectores (DOM real)
+- El pipeline solo promueve selectores `observed_in_dom` (vistos y validados en DOM renderizado).
+- Si no hay evidencia DOM suficiente, el selector queda en `null` y se marca revisión humana en trazas/reporte.
+- Se genera `outputs/<case_id>/clickable_inventory.json` con inventario de nodos accionables por estado.
+- Se genera `outputs/<case_id>/selector_trace.json` con evidencia de selección/rechazo por interacción.
+
+Checks recomendados:
+```bash
+python core/checks/check_selector_grounding.py --case-id case_001 --repo-root .
+```
