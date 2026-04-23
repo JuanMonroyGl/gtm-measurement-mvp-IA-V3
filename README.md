@@ -117,3 +117,46 @@ Checks recomendados:
 python core/checks/check_selector_grounding.py --case-id case_001 --repo-root .
 python core/checks/check_case_output.py --case-id case_001 --repo-root .
 ```
+
+## Capa opcional de IA (OpenAI API)
+- La IA es **opcional** y está apagada por defecto.
+- El núcleo determinístico (normalización, grounding, validaciones y gate final) se mantiene.
+- En esta ronda se integra `image_parse` y se dejan `dom_explorer` / `selector_rerank` preparados.
+
+Estructura:
+```text
+core/ai/
+  config.py
+  contracts.py
+  registry.py
+  cache.py
+  openai_client.py
+  image_parse/{base.py,noop_provider.py,openai_provider.py}
+  dom_explorer/{base.py,noop_provider.py,openai_provider.py}
+  selector_rerank/{base.py,noop_provider.py,openai_provider.py}
+```
+
+Variables de entorno:
+```bash
+OPENAI_API_KEY=...
+AI_ENABLED=false
+AI_PROVIDER=openai
+AI_ENABLE_IMAGE_PARSE=false
+AI_ENABLE_DOM_EXPLORER=false
+AI_ENABLE_SELECTOR_RERANK=false
+AI_SELECTOR_RERANK_ONLY_ON_AMBIGUITY=true
+AI_MODEL_IMAGE=gpt-5-mini
+AI_MODEL_DOM=gpt-5-mini
+AI_MODEL_SELECTOR=gpt-5-mini
+AI_IMAGE_DETAIL=low
+AI_MAX_OUTPUT_TOKENS_IMAGE=700
+AI_MAX_OUTPUT_TOKENS_DOM=500
+AI_MAX_OUTPUT_TOKENS_SELECTOR=350
+AI_CACHE_DIR=.cache/ai
+```
+
+Comportamiento actual:
+- Si `AI_ENABLED=true` y `AI_ENABLE_IMAGE_PARSE=true`, el pipeline invoca `core/ai/image_parse/openai_provider.py`.
+- El resultado se guarda en `outputs/<case_id>/ai_extraction.json`.
+- Si no hay interacciones detectadas por OCR/evidencia determinística, puede usar la extracción AI como fallback estructurado.
+- `dom_explorer` y `selector_rerank` quedan en modo `noop` por ahora.

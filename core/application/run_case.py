@@ -8,6 +8,8 @@ from typing import Any
 
 from core.application.inspect_case import inspect_case_input_structure
 from core.application.resolve_case_input import resolve_case_input
+from core.ai.config import AIConfig
+from core.ai.registry import image_parse_provider
 from core.checks.output_gate import evaluate_output_gate
 from core.cli.context import CaseContext
 from core.cli.errors import UserFacingError
@@ -63,9 +65,47 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     )
     metadata = resolved_case["resolved_metadata"]
     output_dir = ensure_output_dir(context.repo_root, context.case_id)
+    ai_config = AIConfig.from_env()
+    ai_image_parse_result: dict[str, Any] | None = None
+
+    image_paths = sorted(
+        path
+        for path in Path(prepared_images_dir).iterdir()
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    )
+    if image_paths:
+        provider = image_parse_provider(ai_config)
+        ai_image_parse_result = provider.parse(case_id=context.case_id, image_paths=image_paths)
 
     parsed_plan = resolved_case["parsed_plan"]
+    if ai_image_parse_result:
+        parsed_plan["ai_extraction"] = ai_image_parse_result
     measurement_case = normalize_case(metadata=metadata, parsed_plan=parsed_plan)
+
+    if not measurement_case.get("interacciones"):
+        ai_parsed = (ai_image_parse_result or {}).get("parsed") or {}
+        ai_interactions = ai_parsed.get("interactions") or []
+        if ai_interactions:
+            measurement_case["interacciones"] = [
+                {
+                    "tipo_evento": item.get("tipo_evento"),
+                    "activo": ai_parsed.get("activo") or metadata.get("activo"),
+                    "seccion": ai_parsed.get("seccion") or metadata.get("seccion"),
+                    "flujo": item.get("flujo"),
+                    "elemento": None,
+                    "ubicacion": item.get("ubicacion"),
+                    "plan_url": metadata.get("plan_url"),
+                    "target_url": metadata.get("target_url"),
+                    "page_path_regex": metadata.get("page_path_regex"),
+                    "texto_referencia": item.get("texto_referencia"),
+                    "selector_candidato": None,
+                    "selector_activador": None,
+                    "match_count": None,
+                    "confidence": item.get("confidence"),
+                    "warnings": [item.get("warning")] if item.get("warning") else [],
+                }
+                for item in ai_interactions
+            ]
 
     if not measurement_case.get("interacciones"):
         raise UserFacingError(
@@ -128,6 +168,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     run_summary_path = output_dir / "run_summary.json"
     clickable_inventory_path = output_dir / "clickable_inventory.json"
     selector_trace_path = output_dir / "selector_trace.json"
+    ai_extraction_path = output_dir / "ai_extraction.json"
 
     with measurement_case_path.open("w", encoding="utf-8") as file_handle:
         json.dump(measurement_case, file_handle, ensure_ascii=False, indent=2)
@@ -142,6 +183,11 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         encoding="utf-8",
     )
     trigger_selector_path.write_text(trigger_selector, encoding="utf-8")
+    if ai_image_parse_result:
+        ai_extraction_path.write_text(
+            json.dumps(ai_image_parse_result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     resolved_case_input_path.write_text(
         json.dumps(
             {
@@ -206,6 +252,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             "measurement_case": str(measurement_case_path),
             "clickable_inventory": str(clickable_inventory_path),
             "selector_trace": str(selector_trace_path),
+            "ai_extraction": str(ai_extraction_path) if ai_image_parse_result else None,
             "tag_template": str(tag_template_path),
             "trigger_selector": str(trigger_selector_path),
             "report": str(report_path),
@@ -235,6 +282,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         "measurement_case": str(measurement_case_path),
         "clickable_inventory": str(clickable_inventory_path),
         "selector_trace": str(selector_trace_path),
+        "ai_extraction": str(ai_extraction_path) if ai_image_parse_result else None,
         "tag_template": str(tag_template_path),
         "trigger_selector": str(trigger_selector_path),
         "report": str(report_path),
