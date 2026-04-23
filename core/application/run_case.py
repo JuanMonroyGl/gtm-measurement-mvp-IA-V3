@@ -19,8 +19,8 @@ from core.processing.selectors.build_selectors import propose_selectors
 from core.processing.selectors.validate_selectors import validate_selector_candidates
 from core.processing.validation.case_metrics import compute_case_metrics
 from core.processing.validation.schema_validation import validate_measurement_case_schema
-from core.web_scraping.fetch_page import fetch_html
-from core.web_scraping.snapshot_dom import build_dom_snapshot
+from web_scraping.fetch_page import fetch_html
+from web_scraping.snapshot_dom import build_dom_snapshot
 
 
 def ensure_output_dir(repo_root: Path, case_id: str) -> Path:
