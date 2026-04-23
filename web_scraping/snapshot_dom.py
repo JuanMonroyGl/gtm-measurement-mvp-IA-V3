@@ -129,7 +129,9 @@ def _capture_page_signature(page: Page) -> dict[str, Any]:
 def _extract_clickables_with_playwright(page: Page, state: str, source: str) -> list[dict[str, Any]]:
     _annotate_clickable_nodes(page)
     script = f"""
-    (stateName, stateSource) => {{
+    (payload) => {{
+      const stateName = payload.stateName;
+      const stateSource = payload.stateSource;
       const nodes = Array.from(document.querySelectorAll('{CLICKABLE_SELECTOR}'));
       function visible(el) {{
         const r = el.getBoundingClientRect();
@@ -222,7 +224,7 @@ def _extract_clickables_with_playwright(page: Page, state: str, source: str) -> 
       }});
     }}
     """
-    return page.evaluate(script, state, source)
+    return page.evaluate(script, {"stateName": state, "stateSource": source})
 
 
 def _prepare_page(browser: Any, target_url: str) -> Page:
