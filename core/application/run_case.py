@@ -20,6 +20,7 @@ from core.output_generation.report_renderer import render_report
 from core.output_generation.run_summary import build_run_summary
 from core.plan_reader.normalize_plan import normalize_case
 from core.processing.selectors.build_selectors import propose_selectors
+from core.processing.selectors.manual_hints import load_manual_selector_hints
 from core.processing.selectors.validate_selectors import validate_selector_candidates
 from core.processing.validation.case_metrics import compute_case_metrics
 from core.processing.validation.schema_validation import validate_measurement_case_schema
@@ -124,10 +125,12 @@ def run_case(context: CaseContext) -> dict[str, Any]:
 
     target_url = measurement_case.get("target_url")
     dom_snapshot = build_dom_snapshot(target_url=target_url or "")
+    manual_selector_hints = load_manual_selector_hints(context.repo_root, context.case_id)
 
     selector_build_result = propose_selectors(
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
+        manual_selector_hints=manual_selector_hints,
     )
     selector_build_result["render_engine"] = dom_snapshot.render_engine
     selector_build_result["states_captured"] = dom_snapshot.states_captured
@@ -166,6 +169,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         "render_engine": dom_snapshot.render_engine,
         "selector_summary": selector_build_result.get("selector_summary") or {},
         "selector_evidence": selector_build_result.get("selector_evidence") or [],
+        "manual_selector_hints": selector_build_result.get("manual_selector_hints") or {},
     }
     gate_result = evaluate_output_gate(
         measurement_case=measurement_case,

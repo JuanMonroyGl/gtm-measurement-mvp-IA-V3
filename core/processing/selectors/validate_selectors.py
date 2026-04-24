@@ -49,6 +49,7 @@ def validate_selector_candidates(
             interaction["selector_contenedor"] = None
             interaction["selector_item"] = None
             interaction["selector_activador"] = None
+            interaction.pop("selector_metadata", None)
             interaction["match_count"] = int(chosen.get("match_count") or 0)
             interaction["warnings"].append(
                 "Selector rechazado por no cumplir grounding renderizado suficiente; human_review_required=true."
@@ -63,6 +64,7 @@ def validate_selector_candidates(
             interaction["selector_contenedor"] = None
             interaction["selector_item"] = None
             interaction["selector_activador"] = None
+            interaction.pop("selector_metadata", None)
             interaction["warnings"].append(
                 "Selector no existe en los estados renderizados validados; se deja null."
             )
@@ -72,6 +74,7 @@ def validate_selector_candidates(
             interaction["selector_contenedor"] = None
             interaction["selector_item"] = None
             interaction["selector_activador"] = None
+            interaction.pop("selector_metadata", None)
             interaction["warnings"].append(
                 "Selector existe en DOM pero no selecciona el nodo candidato observado; se deja null."
             )
@@ -81,6 +84,7 @@ def validate_selector_candidates(
             interaction["selector_contenedor"] = None
             interaction["selector_item"] = None
             interaction["selector_activador"] = None
+            interaction.pop("selector_metadata", None)
             interaction["warnings"].append(
                 "Selector no demuestra soporte real para event.target.closest(selector); se deja null."
             )
@@ -90,6 +94,7 @@ def validate_selector_candidates(
             interaction["selector_contenedor"] = None
             interaction["selector_item"] = None
             interaction["selector_activador"] = None
+            interaction.pop("selector_metadata", None)
             interaction["warnings"].append(
                 "Selector no queda click_grounded después de validar runtime flags; se deja null."
             )
@@ -99,6 +104,7 @@ def validate_selector_candidates(
             interaction["selector_contenedor"] = None
             interaction["selector_item"] = None
             interaction["selector_activador"] = None
+            interaction.pop("selector_metadata", None)
             interaction["warnings"].append(
                 f"Selector renderizado pero ambiguo ({interaction['match_count']} matches); se deja null."
             )
@@ -124,6 +130,7 @@ def validate_selector_candidates(
                 interaction["selector_contenedor"] = None
                 interaction["selector_item"] = None
                 interaction["selector_activador"] = None
+                interaction.pop("selector_metadata", None)
                 interaction["warnings"].append(
                     "Selector grupal rechazado por selector_item o selector_contenedor genérico/no discriminante; human_review_required=true."
                 )
@@ -133,6 +140,7 @@ def validate_selector_candidates(
                 interaction["selector_contenedor"] = None
                 interaction["selector_item"] = None
                 interaction["selector_activador"] = None
+                interaction.pop("selector_metadata", None)
                 interaction["warnings"].append(
                     "Selector grupal rechazado por variant_coverage=0; human_review_required=true."
                 )
@@ -142,6 +150,7 @@ def validate_selector_candidates(
                 interaction["selector_contenedor"] = None
                 interaction["selector_item"] = None
                 interaction["selector_activador"] = None
+                interaction.pop("selector_metadata", None)
                 interaction["warnings"].append(
                     f"Selector grupal rechazado por match_count global excesivo ({interaction['match_count']}); human_review_required=true."
                 )
@@ -151,6 +160,7 @@ def validate_selector_candidates(
                 interaction["selector_contenedor"] = None
                 interaction["selector_item"] = None
                 interaction["selector_activador"] = None
+                interaction.pop("selector_metadata", None)
                 interaction["warnings"].append(
                     f"Selector grupal rechazado por container_match_count excesivo ({chosen.get('container_match_count')}); human_review_required=true."
                 )
@@ -160,6 +170,7 @@ def validate_selector_candidates(
                 interaction["selector_contenedor"] = None
                 interaction["selector_item"] = None
                 interaction["selector_activador"] = None
+                interaction.pop("selector_metadata", None)
                 interaction["warnings"].append(
                     "Selector grupal rechazado por visible_text vacío o sin señales útiles; human_review_required=true."
                 )

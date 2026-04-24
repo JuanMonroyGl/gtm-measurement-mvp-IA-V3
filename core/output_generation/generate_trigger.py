@@ -17,11 +17,11 @@ def build_consolidated_trigger_selector(measurement_case: dict[str, Any]) -> str
         selector_candidato = interaction.get("selector_item") or interaction.get("selector_candidato")
         selector_activador = interaction.get("selector_activador")
         if selector_candidato:
-            base = str(selector_candidato).strip()
-            if is_unsafe_group_selector(base):
-                continue
-            selectors.append(base)
-            selectors.append(f"{base} *")
+            for base in [part.strip() for part in str(selector_candidato).split(",") if part.strip()]:
+                if is_unsafe_group_selector(base):
+                    continue
+                selectors.append(base)
+                selectors.append(f"{base} *")
             continue
         if not selector_activador:
             continue

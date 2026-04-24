@@ -79,6 +79,7 @@
           "selector_contenedor": { "type": ["string", "null"] },
           "selector_item": { "type": ["string", "null"] },
           "selector_activador": { "type": ["string", "null"] },
+          "selector_metadata": { "type": ["object", "null"] },
           "match_count": { "type": ["integer", "null"], "minimum": 0 },
           "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
           "warnings": {

@@ -66,6 +66,7 @@ def _build_selector_rules(measurement_case: dict[str, Any]) -> list[dict[str, An
                 "is_card": _is_card_interaction(interaction),
                 "element_variants": [str(item) for item in (interaction.get("element_variants") or [])],
                 "title_variants": [str(item) for item in (interaction.get("title_variants") or [])],
+                "card_mapping": list((interaction.get("selector_metadata") or {}).get("card_mapping") or []),
             }
         )
     return rules
@@ -110,6 +111,38 @@ def _append_card_title_resolution(lines: list[str], rule: dict[str, Any]) -> Non
     card_ids = selector_ids or container_ids
     element_variants = rule.get("element_variants") or []
     title_variants = rule.get("title_variants") or []
+    card_mapping = [
+        item
+        for item in (rule.get("card_mapping") or [])
+        if item.get("card_id") and (item.get("elemento") or item.get("tituloCard"))
+    ]
+    if card_mapping:
+        lines.extend(
+            [
+                "      // Fallback plan-based: IDs observados en DOM y titulos tomados del plan de medicion.",
+                "      var card = item.closest(" + _to_js(", ".join(f"#{item['card_id']}" for item in card_mapping)) + ");",
+                "      var cardsData = {",
+            ]
+        )
+        for index, item in enumerate(card_mapping):
+            comma = "," if index < len(card_mapping) - 1 else ""
+            lines.extend(
+                [
+                    f"        {_to_js(item['card_id'])}: {{",
+                    f"          elemento: {_to_js(item.get('elemento') or '')},",
+                    f"          tituloCard: {_to_js(item.get('tituloCard') or '')}",
+                    f"        }}{comma}",
+                ]
+            )
+        lines.extend(
+            [
+                "      };",
+                "      var cardInfo = card ? cardsData[card.id] : null;",
+                "      if (cardInfo && cardInfo.elemento) { value = cardInfo.elemento; }",
+                "      if (cardInfo && cardInfo.tituloCard) { data['tituloCard'] = cardInfo.tituloCard; }",
+            ]
+        )
+        return
     if card_ids and title_variants:
         mapping_count = min(len(card_ids), len(title_variants))
         lines.extend(

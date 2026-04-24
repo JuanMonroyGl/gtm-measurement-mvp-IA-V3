@@ -56,11 +56,17 @@ def compute_case_metrics(
     candidates_from_fallback = 0
     rejected_for_safety = 0
     human_review_required = 0
+    promoted_from_manual_golden_hint = 0
     for evidence in selector_evidence or []:
         chosen = evidence.get("chosen") or {}
         chosen_origin = chosen.get("selector_origin") or evidence.get("selector_origin") or SELECTOR_ORIGIN_REJECTED
         if evidence.get("promoted") and chosen_origin == SELECTOR_ORIGIN_RENDERED:
             promoted_from_rendered += 1
+        if evidence.get("promoted") and (
+            chosen.get("selector_source") == "manual_golden_hint"
+            or evidence.get("selector_source") == "manual_golden_hint"
+        ):
+            promoted_from_manual_golden_hint += 1
         if chosen_origin == SELECTOR_ORIGIN_FALLBACK:
             candidates_from_fallback += 1
         if not evidence.get("promoted"):
@@ -83,6 +89,7 @@ def compute_case_metrics(
         "interactions_with_warnings": interactions_with_warnings,
         "total_warnings": total_warnings,
         "promoted_from_rendered_dom": promoted_from_rendered,
+        "promoted_from_manual_golden_hint": promoted_from_manual_golden_hint,
         "candidates_from_raw_html_fallback": candidates_from_fallback,
         "rejected_for_safety": rejected_for_safety,
         "human_review_required": human_review_required,

@@ -8,6 +8,7 @@ from typing import Any
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from core.processing.selectors.manual_hints import MANUAL_GOLDEN_HINT_SOURCE
 from core.processing.selectors.safety import (
     container_match_limit,
     group_match_limit,
@@ -147,6 +148,38 @@ def _selector_match_count(selector: str, soups: dict[str, BeautifulSoup]) -> tup
             best_count = count
             best_state = state
     return best_count, best_state
+
+
+def _select_matches(selector: str, soups: dict[str, BeautifulSoup], state: str | None = None) -> tuple[list[Tag], str | None]:
+    if state and state in soups:
+        try:
+            return list(soups[state].select(selector)), state
+        except Exception:
+            return [], state
+    count, observed_state = _selector_match_count(selector, soups)
+    if not observed_state or count == 0:
+        return [], observed_state
+    try:
+        return list(soups[observed_state].select(selector)), observed_state
+    except Exception:
+        return [], observed_state
+
+
+def _tag_visible_text(tag: Tag) -> str:
+    return re.sub(r"\s+", " ", tag.get_text(" ", strip=True)).strip()
+
+
+def _selector_parent(selector: str) -> str | None:
+    clean = selector.strip()
+    if "," in clean:
+        parents = [_selector_parent(part.strip()) for part in clean.split(",") if part.strip()]
+        parents = [parent for parent in parents if parent]
+        return ", ".join(parents) if parents else None
+    for separator in (" > ", " "):
+        if separator in clean:
+            parent = clean.rsplit(separator, 1)[0].strip()
+            return parent or None
+    return None
 
 
 def _runtime_flags(
@@ -314,6 +347,7 @@ def _candidate_evidence(
     return {
         "selector": selector,
         "selector_type": selector_type,
+        "selector_source": "automatic",
         "selector_origin": origin,
         "state": observed_state or item.get("state"),
         "match_count": match_count,
@@ -569,6 +603,212 @@ def _href_group_selector(interaction: dict[str, Any], items: list[dict[str, Any]
     return None
 
 
+def _matched_variants_from_text(interaction: dict[str, Any], *texts: str) -> list[str]:
+    haystack = _normalize(" ".join(text for text in texts if text))
+    variants = _expected_group_variants(interaction)
+    return [variant for variant in variants if _normalize(variant) and _normalize(variant) in haystack]
+
+
+def _hint_container_selector(selector: str, interaction: dict[str, Any]) -> str | None:
+    if "," in selector:
+        roots = []
+        for part in selector.split(","):
+            ids = re.findall(r"#([A-Za-z_][\w-]*)", part)
+            if ids:
+                roots.append(f"#{ids[0]}")
+            else:
+                parent = _selector_parent(part.strip())
+                if parent:
+                    roots.append(parent)
+        return ", ".join(dict.fromkeys(roots)) if roots else None
+
+    group_context = _normalize(interaction.get("group_context"))
+    if group_context == "faq_collection" and ".lista-preguntas" in selector:
+        return ".lista-preguntas"
+    parent = _selector_parent(selector)
+    return parent if parent and not is_unsafe_group_selector(parent) else None
+
+
+def _hint_context_text(matches: list[Tag], container_selector: str | None, soup: BeautifulSoup | None) -> list[str]:
+    values: list[str] = []
+    containers: list[Tag] = []
+    if container_selector and soup is not None:
+        try:
+            containers = list(soup.select(container_selector))
+        except Exception:
+            containers = []
+    for match in matches:
+        values.append(_tag_visible_text(match))
+        container = next(
+            (
+                candidate
+                for candidate in containers
+                if candidate is match or any(parent is candidate for parent in match.parents)
+            ),
+            None,
+        )
+        if container is not None:
+            values.append(_tag_visible_text(container))
+        else:
+            parent = match.parent
+            if isinstance(parent, Tag):
+                values.append(_tag_visible_text(parent))
+    return values
+
+
+def _card_mapping_from_hint(selector: str, interaction: dict[str, Any]) -> list[dict[str, str]]:
+    element_variants = _normalized_list(interaction.get("element_variants"))
+    title_variants = _normalized_list(interaction.get("title_variants"))
+    mappings: list[dict[str, str]] = []
+    parts = [part.strip() for part in selector.split(",") if part.strip()]
+    for index, part in enumerate(parts):
+        ids = re.findall(r"#([A-Za-z_][\w-]*)", part)
+        if not ids:
+            continue
+        mapping: dict[str, str] = {
+            "card_id": ids[0],
+            "selector": part,
+        }
+        if index < len(element_variants):
+            mapping["elemento"] = element_variants[index]
+        if index < len(title_variants):
+            mapping["tituloCard"] = title_variants[index]
+        mappings.append(mapping)
+    return mappings
+
+
+def _manual_hint_evidence(
+    *,
+    interaction: dict[str, Any],
+    selector: str,
+    soups: dict[str, BeautifulSoup],
+    hint_file: str | None,
+) -> dict[str, Any]:
+    selector = selector.strip()
+    container_selector = _hint_container_selector(selector, interaction)
+    item_matches, observed_state = _select_matches(selector, soups)
+    soup = soups.get(observed_state) if observed_state else None
+    container_match_count, _container_state = _selector_match_count(container_selector, soups) if container_selector else (0, None)
+    item_match_count = len(item_matches)
+    context_values = _hint_context_text(item_matches, container_selector, soup)
+    matched_variants = _matched_variants_from_text(interaction, *context_values)
+    expected_variants = _expected_group_variants(interaction)
+    minimum_variant_coverage = _minimum_group_variant_coverage(interaction)
+    item_match_limit = group_match_limit(len(expected_variants), len(matched_variants))
+    promotion_blockers: list[str] = []
+    promotion_blockers.extend(selector_safety_blockers(selector, role="item"))
+    if not container_selector:
+        promotion_blockers.append("manual_golden_hint sin contenedor estable derivable")
+    elif is_unsafe_group_selector(container_selector):
+        promotion_blockers.append(f"manual_golden_hint con contenedor no discriminante: {container_selector}")
+    if item_match_count == 0:
+        promotion_blockers.append("manual_golden_hint no existe en DOM renderizado")
+    if item_match_count < 2:
+        promotion_blockers.append("manual_golden_hint cubre menos de 2 items")
+    if item_match_count > item_match_limit:
+        promotion_blockers.append(f"match_count global excesivo para hint ({item_match_count})")
+    if container_selector and container_match_count > container_match_limit():
+        promotion_blockers.append(f"container_match_count excesivo para hint ({container_match_count})")
+    if len(matched_variants) < minimum_variant_coverage:
+        promotion_blockers.append(
+            f"variant_coverage insuficiente para hint ({len(matched_variants)} < {minimum_variant_coverage})"
+        )
+    if not useful_visible_text(context_values):
+        promotion_blockers.append("manual_golden_hint sin texto visible útil")
+
+    group_context = _normalize(interaction.get("group_context"))
+    if group_context == "card_collection" and "," not in selector:
+        promotion_blockers.append("card_collection requiere selector_item compuesto para hints de cards")
+
+    card_mapping = _card_mapping_from_hint(selector, interaction) if group_context == "card_collection" else []
+    if group_context == "card_collection" and not card_mapping:
+        promotion_blockers.append("card_collection sin mapping plan-based derivado del hint")
+
+    can_promote = not promotion_blockers
+    return {
+        "selector": selector,
+        "selector_type": _selector_type(selector),
+        "selector_source": MANUAL_GOLDEN_HINT_SOURCE,
+        "selector_origin": SELECTOR_ORIGIN_RENDERED if item_matches else SELECTOR_ORIGIN_REJECTED,
+        "hint_file": hint_file,
+        "state": observed_state,
+        "match_count": item_match_count,
+        "container_match_count": container_match_count,
+        "selector_contenedor": container_selector,
+        "selector_item": selector,
+        "group_item_count": item_match_count,
+        "candidate_group_item_count": item_match_count,
+        "matched_variants": matched_variants,
+        "variant_coverage": len(matched_variants),
+        "minimum_variant_coverage": minimum_variant_coverage,
+        "group_match_limit": item_match_limit,
+        "outside_match_count": 0,
+        "visible_text": context_values[:5],
+        "context_text": context_values[:3],
+        "attributes": {
+            "node_ids": [match.get(NODE_ID_ATTR) for match in item_matches[:10] if match.get(NODE_ID_ATTR)],
+        },
+        "alignment_score": len(matched_variants) * 60,
+        "specificity_score": SELECTOR_TYPE_WEIGHTS.get(_selector_type(selector), 0) + 20,
+        "score": len(matched_variants) * 80 + item_match_count * 15 + 50,
+        "exists_in_dom": bool(item_matches),
+        "matches_candidate_node": bool(item_matches),
+        "closest_runtime_supported": bool(item_matches),
+        "click_grounded": bool(item_matches),
+        "promotion_blockers": promotion_blockers,
+        "can_promote": can_promote,
+        "card_mapping": card_mapping,
+        "outer_html_excerpt": [str(match)[:500] for match in item_matches[:3]],
+        "uniqueness_explanation": (
+            f"manual_golden_hint con {item_match_count} matches"
+            if item_match_count
+            else "manual_golden_hint sin matches"
+        ),
+    }
+
+
+def _manual_hint_group_traces(
+    *,
+    interaction: dict[str, Any],
+    soups: dict[str, BeautifulSoup],
+    manual_selector_hints: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    selectors = list((manual_selector_hints or {}).get("selectors") or [])
+    if not selectors:
+        return []
+    hint_file = (manual_selector_hints or {}).get("hint_file")
+    group_context = _normalize(interaction.get("group_context"))
+    traces: list[dict[str, Any]] = []
+
+    if group_context == "card_collection":
+        card_candidates = [
+            selector
+            for selector in selectors
+            if re.search(r"#recomendado_\d+", selector) or "card-footer" in selector or "btn-outline-brand" in selector
+        ]
+        if card_candidates:
+            traces.append(
+                _manual_hint_evidence(
+                    interaction=interaction,
+                    selector=", ".join(card_candidates),
+                    soups=soups,
+                    hint_file=hint_file,
+                )
+            )
+        return traces
+
+    for selector in selectors:
+        traces.append(
+            _manual_hint_evidence(
+                interaction=interaction,
+                selector=selector,
+                soups=soups,
+                hint_file=hint_file,
+            )
+        )
+    return traces
+
+
 def _dedupe_items_by_node_id(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     unique: dict[str, dict[str, Any]] = {}
     for item in items:
@@ -804,6 +1044,7 @@ def _group_candidate_evidence(
     return {
         "selector": item_selector,
         "selector_type": item_selector_type,
+        "selector_source": "automatic",
         "selector_origin": origin,
         "state": observed_state,
         "match_count": item_match_count,
@@ -887,6 +1128,7 @@ def _select_group_interaction(
     inventory: list[dict[str, Any]],
     soups: dict[str, BeautifulSoup],
     dom_snapshot: dict[str, Any],
+    manual_selector_hints: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     aligned_items: list[dict[str, Any]] = []
     for item in inventory:
@@ -902,30 +1144,38 @@ def _select_group_interaction(
         aligned_items.append(enriched)
 
     unique_items = _dedupe_items_by_node_id(aligned_items)
-    if len(unique_items) < 2:
-        return None, []
-
-    ancestor_candidates = _common_ancestor_selectors(unique_items)
     traces: list[dict[str, Any]] = []
-    for ancestor in ancestor_candidates:
-        container_selector = ancestor["selector"]
-        if is_unsafe_group_selector(container_selector):
-            continue
-        for item_selector in _group_item_selector_candidates(container_selector, unique_items, interaction):
-            traces.append(
-                _group_candidate_evidence(
-                    interaction=interaction,
-                    matched_items=unique_items,
-                    container_selector=container_selector,
-                    item_selector=item_selector,
-                    soups=soups,
-                    dom_snapshot=dom_snapshot,
+
+    if len(unique_items) >= 2:
+        ancestor_candidates = _common_ancestor_selectors(unique_items)
+        for ancestor in ancestor_candidates:
+            container_selector = ancestor["selector"]
+            if is_unsafe_group_selector(container_selector):
+                continue
+            for item_selector in _group_item_selector_candidates(container_selector, unique_items, interaction):
+                traces.append(
+                    _group_candidate_evidence(
+                        interaction=interaction,
+                        matched_items=unique_items,
+                        container_selector=container_selector,
+                        item_selector=item_selector,
+                        soups=soups,
+                        dom_snapshot=dom_snapshot,
+                    )
                 )
-            )
+
+    traces.extend(
+        _manual_hint_group_traces(
+            interaction=interaction,
+            soups=soups,
+            manual_selector_hints=manual_selector_hints,
+        )
+    )
 
     traces.sort(
         key=lambda trace: (
             int(bool(trace.get("can_promote"))),
+            int(trace.get("selector_source") == MANUAL_GOLDEN_HINT_SOURCE),
             int(trace.get("variant_coverage", 0)),
             int(trace.get("group_item_count", 0)),
             int(trace.get("specificity_score", 0)),
@@ -936,7 +1186,11 @@ def _select_group_interaction(
     return (traces[0] if traces else None), traces
 
 
-def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, Any]) -> dict[str, Any]:
+def propose_selectors(
+    measurement_case: dict[str, Any],
+    dom_snapshot: dict[str, Any],
+    manual_selector_hints: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     state_html = dom_snapshot.get("state_html") or {}
     soups = {state: BeautifulSoup(html, "lxml") for state, html in state_html.items()}
     inventory = [item for item in (dom_snapshot.get("clickable_inventory") or []) if item.get("is_clickable")]
@@ -973,6 +1227,7 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
             "selector_evidence": selector_evidence,
             "selector_summary": _selector_trace_summary(selector_evidence),
             "state_metadata": dom_snapshot.get("state_metadata") or [],
+            "manual_selector_hints": manual_selector_hints or {"available": False, "selectors": []},
         }
 
     selector_evidence: list[dict[str, Any]] = []
@@ -987,6 +1242,7 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
                 inventory=inventory,
                 soups=soups,
                 dom_snapshot=dom_snapshot,
+                manual_selector_hints=manual_selector_hints,
             )
         else:
             chosen, traces = _select_single_interaction(
@@ -1031,11 +1287,18 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
             interaction["selector_contenedor"] = chosen.get("selector_contenedor")
             interaction["selector_item"] = chosen.get("selector_item") or selector
             interaction["selector_activador"] = f"{selector}, {selector} *"
+            if chosen.get("selector_source") == MANUAL_GOLDEN_HINT_SOURCE:
+                interaction["selector_metadata"] = {
+                    "selector_source": MANUAL_GOLDEN_HINT_SOURCE,
+                    "hint_file": chosen.get("hint_file"),
+                    "card_mapping": chosen.get("card_mapping") or [],
+                }
         else:
             interaction["selector_candidato"] = None
             interaction["selector_contenedor"] = None
             interaction["selector_item"] = None
             interaction["selector_activador"] = None
+            interaction.pop("selector_metadata", None)
 
         if chosen["selector_origin"] == SELECTOR_ORIGIN_FALLBACK:
             interaction["warnings"].append(
@@ -1059,6 +1322,8 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
                 "index": index,
                 "selector": chosen.get("selector") if promoted else None,
                 "selector_origin": chosen.get("selector_origin") or SELECTOR_ORIGIN_REJECTED,
+                "selector_source": chosen.get("selector_source") or "automatic",
+                "hint_file": chosen.get("hint_file"),
                 "human_review_required": (not promoted) or (
                     interaction_mode == "single" and chosen.get("match_count") != 1
                 ),
@@ -1082,4 +1347,5 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
         "selector_evidence": selector_evidence,
         "selector_summary": _selector_trace_summary(selector_evidence),
         "state_metadata": dom_snapshot.get("state_metadata") or [],
+        "manual_selector_hints": manual_selector_hints or {"available": False, "selectors": []},
     }

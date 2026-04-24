@@ -125,6 +125,8 @@ def render_report(
         lines.append(f"  - selector_contenedor: {interaction.get('selector_contenedor')}")
         lines.append(f"  - selector_item: {interaction.get('selector_item')}")
         lines.append(f"  - selector_activador: {interaction.get('selector_activador')}")
+        if interaction.get("selector_metadata"):
+            lines.append(f"  - selector_metadata: {interaction.get('selector_metadata')}")
         lines.append(f"  - match_count: {interaction.get('match_count')}")
         lines.append(f"  - confidence: {interaction.get('confidence')}")
 
@@ -132,6 +134,9 @@ def render_report(
         if evidence:
             lines.append(f"  - promoted: {evidence.get('promoted')}")
             lines.append(f"  - selector_origin: {evidence.get('selector_origin')}")
+            lines.append(f"  - selector_source: {evidence.get('selector_source')}")
+            if evidence.get("hint_file"):
+                lines.append(f"  - hint_file: {evidence.get('hint_file')}")
             lines.append(f"  - human_review_required: {evidence.get('human_review_required')}")
             if evidence.get("rejection_reason"):
                 lines.append(f"  - rejection_reason: {evidence.get('rejection_reason')}")
@@ -139,6 +144,9 @@ def render_report(
             if chosen:
                 lines.append(f"  - chosen_selector: {chosen.get('selector')}")
                 lines.append(f"  - chosen_selector_origin: {chosen.get('selector_origin')}")
+                lines.append(f"  - chosen_selector_source: {chosen.get('selector_source')}")
+                if chosen.get("hint_file"):
+                    lines.append(f"  - chosen_hint_file: {chosen.get('hint_file')}")
                 lines.append(f"  - selector_type: {chosen.get('selector_type')}")
                 lines.append(f"  - dom_state: {chosen.get('state')}")
                 if chosen.get("selector_contenedor"):
@@ -159,6 +167,8 @@ def render_report(
                 lines.append(f"  - matched_context_tokens: {chosen.get('matched_context_tokens')}")
                 if chosen.get("matched_variants") is not None:
                     lines.append(f"  - matched_variants: {chosen.get('matched_variants')}")
+                if chosen.get("card_mapping"):
+                    lines.append(f"  - card_mapping: {chosen.get('card_mapping')}")
                 lines.append(f"  - promotion_blockers: {chosen.get('promotion_blockers')}")
                 lines.append(f"  - outer_html_excerpt: {chosen.get('outer_html_excerpt')}")
 
@@ -182,6 +192,7 @@ def render_report(
             f"- match_count_1: {case_metrics.get('match_count_1')}",
             f"- match_count_gt_1: {case_metrics.get('match_count_gt_1')}",
             f"- promoted_from_rendered_dom: {case_metrics.get('promoted_from_rendered_dom')}",
+            f"- promoted_from_manual_golden_hint: {case_metrics.get('promoted_from_manual_golden_hint')}",
             f"- candidates_from_raw_html_fallback: {case_metrics.get('candidates_from_raw_html_fallback')}",
             f"- rejected_for_safety: {case_metrics.get('rejected_for_safety')}",
             f"- human_review_required: {case_metrics.get('human_review_required')}",
@@ -259,6 +270,7 @@ def render_report(
             f"- validation_status: {selector_validation.get('status')}",
             f"- validated_interactions: {selector_validation.get('validated_interactions')}",
             f"- promoted_after_validation: {selector_validation.get('promoted_after_validation')}",
+            f"- manual_selector_hints: {selector_build_result.get('manual_selector_hints')}",
         ]
     )
     for warning in selector_validation.get("warnings") or []:
