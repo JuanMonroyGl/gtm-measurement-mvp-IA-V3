@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.output_generation.generate_gtm_tag import summarize_generated_rules
 from core.processing.selectors.build_selectors import SELECTOR_ORIGIN_RENDERED
 from core.processing.selectors.safety import (
     container_match_limit,
@@ -105,6 +106,7 @@ def evaluate_output_gate(
     clickable_inventory: dict[str, Any],
     tag_template: str,
     trigger_selector: str,
+    golden_comparison: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -140,6 +142,22 @@ def evaluate_output_gate(
     if "No interaction rules available for this case." in tag_clean:
         errors.append("tag_template.js quedó sin reglas útiles.")
 
+    generated_rule_summary = summarize_generated_rules(measurement_case, tag_template)
+    if generated_rule_summary["generated_rule_coverage"] < 1.0:
+        errors.append(
+            "tag_template.js incompleto: "
+            f"generated_rules={generated_rule_summary['generated_rules']} "
+            f"total_interactions={generated_rule_summary['total_interactions']} "
+            f"generated_rule_coverage={generated_rule_summary['generated_rule_coverage']}"
+        )
+    if generated_rule_summary["forbidden_helpers"]:
+        errors.append(
+            "tag_template.js contiene helpers abstractos prohibidos: "
+            + ", ".join(generated_rule_summary["forbidden_helpers"])
+        )
+    if generated_rule_summary["uses_json_rule_blob"]:
+        errors.append("tag_template.js contiene reglas JSON embebidas o mini framework de grupos.")
+
     for unsafe in ("div div", "div a", "div", "a", "body", "main", "section", "*"):
         if f"resolveGroupNode(e, \"{unsafe}\"" in tag_clean or f"resolveGroupNode(e, '{unsafe}'" in tag_clean:
             errors.append(f"tag_template.js genera resolveGroupNode con selector genÃ©rico: {unsafe}")
@@ -151,10 +169,26 @@ def evaluate_output_gate(
     errors.extend(grounding["errors"])
     warnings.extend(grounding["warnings"])
 
+    if golden_comparison and golden_comparison.get("available"):
+        if golden_comparison.get("generated_branch_count", 0) < golden_comparison.get("manual_branch_count", 0):
+            warnings.append(
+                "Comparacion golden: el tag generado tiene menos ramas que el manual "
+                f"({golden_comparison.get('generated_branch_count')} < {golden_comparison.get('manual_branch_count')})."
+            )
+        if golden_comparison.get("generated_forbidden_helpers"):
+            errors.append(
+                "Comparacion golden: el tag generado usa helpers prohibidos: "
+                + ", ".join(golden_comparison.get("generated_forbidden_helpers") or [])
+            )
+        if golden_comparison.get("generated_uses_json_rule_blob"):
+            errors.append("Comparacion golden: el tag generado contiene reglas JSON embebidas.")
+
     return {
         "passed": not errors,
         "errors": errors,
         "warnings": warnings,
         "grounding": grounding,
         "promoted_selectors": len(promoted_selectors),
+        "generated_rule_summary": generated_rule_summary,
+        "golden_comparison": golden_comparison or {"available": False},
     }

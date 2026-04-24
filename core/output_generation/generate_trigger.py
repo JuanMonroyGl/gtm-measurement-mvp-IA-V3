@@ -14,15 +14,10 @@ def build_consolidated_trigger_selector(measurement_case: dict[str, Any]) -> str
     """Build consolidated trigger selector with `selector` and `selector *`."""
     selectors: list[str] = []
     for interaction in measurement_case.get("interacciones", []):
-        interaction_mode = str(interaction.get("interaction_mode") or "single").lower()
         selector_candidato = interaction.get("selector_item") or interaction.get("selector_candidato")
         selector_activador = interaction.get("selector_activador")
         if selector_candidato:
             base = str(selector_candidato).strip()
-            if interaction_mode == "group" and (
-                is_unsafe_group_selector(base) or is_unsafe_group_selector(interaction.get("selector_contenedor"))
-            ):
-                continue
             if is_unsafe_group_selector(base):
                 continue
             selectors.append(base)

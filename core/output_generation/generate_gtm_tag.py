@@ -1,73 +1,80 @@
-"""GTM tag template generation."""
+"""GTM tag template generation with human-readable closest branches."""
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-from core.processing.selectors.safety import group_match_limit, is_unsafe_group_selector
+from core.processing.selectors.safety import is_unsafe_group_selector
+
+
+FORBIDDEN_ABSTRACT_HELPERS = (
+    "resolveGroupNode",
+    "resolveGroupValue",
+    "matchKnownVariant",
+    "collectContextRoots",
+)
 
 
 def _to_js(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _selector_priority(selector: str) -> int:
-    if selector.startswith("#"):
-        return 100
-    if "[data-" in selector:
-        return 80
-    if "[aria-" in selector:
-        return 70
-    if "[href=" in selector:
-        return 60
-    if "." in selector:
-        return 40
-    return 10
+def _selector_literal(selector: str) -> str:
+    parts = [part.strip() for part in selector.split(",") if part.strip()]
+    if len(parts) <= 1:
+        return _to_js(selector)
+    return " +\n        ".join(_to_js(f"{part}{', ' if index < len(parts) - 1 else ''}") for index, part in enumerate(parts))
+
+
+def _extract_selector_ids(selector: str | None) -> list[str]:
+    if not selector:
+        return []
+    ids: list[str] = []
+    for match in re.finditer(r"#([A-Za-z_][\w-]*)", selector):
+        value = match.group(1)
+        if value not in ids:
+            ids.append(value)
+    return ids
+
+
+def _is_card_interaction(interaction: dict[str, Any]) -> bool:
+    return "card" in str(interaction.get("tipo_evento") or "").lower() or (
+        str(interaction.get("group_context") or "").lower() == "card_collection"
+    )
 
 
 def _build_selector_rules(measurement_case: dict[str, Any]) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
-    for interaction in measurement_case.get("interacciones", []):
-        interaction_mode = str(interaction.get("interaction_mode") or "single").lower()
-        selector = interaction.get("selector_item") or interaction.get("selector_candidato") or interaction.get("selector_activador")
+    for index, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
+        selector = interaction.get("selector_item") or interaction.get("selector_candidato")
         if not selector:
             continue
-        if interaction_mode == "group":
-            container_selector = interaction.get("selector_contenedor")
-            expected_variants = list(interaction.get("element_variants") or []) + list(
-                interaction.get("title_variants") or []
-            )
-            if (
-                not interaction.get("selector_item")
-                or not container_selector
-                or is_unsafe_group_selector(selector)
-                or is_unsafe_group_selector(container_selector)
-                or int(interaction.get("match_count") or 0) > group_match_limit(len(expected_variants))
-            ):
-                continue
+        selector_text = str(selector).strip()
+        if not selector_text or is_unsafe_group_selector(selector_text):
+            continue
+        container_selector = interaction.get("selector_contenedor")
         rules.append(
             {
-                "mode": interaction_mode,
-                "selector": str(selector),
-                "container_selector": interaction.get("selector_contenedor"),
+                "index": index,
+                "selector": selector_text,
+                "container_selector": str(container_selector).strip() if container_selector else None,
                 "event_name": str(interaction.get("tipo_evento") or "Clic Boton"),
                 "flujo": str(interaction.get("flujo") or ""),
                 "ubicacion": str(interaction.get("ubicacion") or ""),
-                "value_extraction_strategy": str(interaction.get("value_extraction_strategy") or "click_text"),
-                "element_variants": list(interaction.get("element_variants") or []),
-                "title_variants": list(interaction.get("title_variants") or []),
+                "is_card": _is_card_interaction(interaction),
+                "element_variants": [str(item) for item in (interaction.get("element_variants") or [])],
+                "title_variants": [str(item) for item in (interaction.get("title_variants") or [])],
             }
         )
-    rules.sort(key=lambda item: (_selector_priority(item["selector"]), len(item["selector"])), reverse=True)
     return rules
 
 
 def _assert_no_conflicting_duplicate_selectors(selector_rules: list[dict[str, Any]]) -> None:
-    grouped: dict[tuple[str, str, str | None], set[tuple[str, str, str]]] = {}
+    grouped: dict[str, set[tuple[str, str, str]]] = {}
     for rule in selector_rules:
-        key = (rule["mode"], rule["selector"], rule.get("container_selector"))
-        grouped.setdefault(key, set()).add((rule["event_name"], rule["flujo"], rule["ubicacion"]))
+        grouped.setdefault(rule["selector"], set()).add((rule["event_name"], rule["flujo"], rule["ubicacion"]))
 
     conflicts = {selector: payloads for selector, payloads in grouped.items() if len(payloads) > 1}
     if not conflicts:
@@ -77,11 +84,75 @@ def _assert_no_conflicting_duplicate_selectors(selector_rules: list[dict[str, An
     for selector, payloads in conflicts.items():
         payload_list = ", ".join(f"{event}/{flujo}/{ubicacion}" for event, flujo, ubicacion in sorted(payloads))
         details.append(f"{selector} -> [{payload_list}]")
-    detail_text = "; ".join(details)
     raise ValueError(
-        "Conflicto de selectores en generación de tag: múltiples interacciones comparten la misma "
-        "regla de disparo con payload distinto, lo que produciría ramas muertas en if/else if. "
-        f"Detalles: {detail_text}"
+        "Conflicto de selectores en generacion de tag: multiples interacciones comparten el mismo closest "
+        f"con payload distinto. Detalles: {'; '.join(details)}"
+    )
+
+
+def _append_value_from_item(lines: list[str], indent: str = "      ") -> None:
+    lines.extend(
+        [
+            f"{indent}var value = cText;",
+            f"{indent}if (typeof value === 'function') {{ value = value(item); }}",
+            f"{indent}if (!value) {{",
+            f"{indent}  value = (typeof getText === 'function') ? getText(item) : getText;",
+            f"{indent}}}",
+            f"{indent}if (!value && item) {{ value = item.innerText || item.textContent; }}",
+            f"{indent}value = (typeof clean === 'function') ? clean(value || '') : (value || '');",
+        ]
+    )
+
+
+def _append_card_title_resolution(lines: list[str], rule: dict[str, Any]) -> None:
+    selector_ids = _extract_selector_ids(rule.get("selector"))
+    container_ids = _extract_selector_ids(rule.get("container_selector"))
+    card_ids = selector_ids or container_ids
+    element_variants = rule.get("element_variants") or []
+    title_variants = rule.get("title_variants") or []
+    if card_ids and title_variants:
+        mapping_count = min(len(card_ids), len(title_variants))
+        lines.extend(
+            [
+                "      // Fallback plan-based: IDs observados en DOM y titulos tomados del plan de medicion.",
+                "      var card = item.closest(" + _to_js(", ".join(f"#{card_id}" for card_id in card_ids[:mapping_count])) + ");",
+                "      var cardsData = {",
+            ]
+        )
+        for index, card_id in enumerate(card_ids[:mapping_count]):
+            elemento = element_variants[index] if index < len(element_variants) else ""
+            title = title_variants[index]
+            comma = "," if index < mapping_count - 1 else ""
+            lines.extend(
+                [
+                    f"        {_to_js(card_id)}: {{",
+                    f"          elemento: {_to_js(elemento)},",
+                    f"          tituloCard: {_to_js(title)}",
+                    f"        }}{comma}",
+                ]
+            )
+        lines.extend(
+            [
+                "      };",
+                "      var cardInfo = card ? cardsData[card.id] : null;",
+                "      if (cardInfo && cardInfo.elemento) { value = cardInfo.elemento; }",
+                "      if (cardInfo && cardInfo.tituloCard) { data['tituloCard'] = cardInfo.tituloCard; }",
+            ]
+        )
+        return
+
+    container_selector = rule.get("container_selector")
+    if container_selector and not is_unsafe_group_selector(container_selector):
+        lines.append(f"      var card = item.closest({_to_js(container_selector)});")
+    else:
+        lines.append("      var card = item.closest('[id], article, section, li, .card, .swiper-slide');")
+    lines.extend(
+        [
+            "      var titleNode = card ? card.querySelector('[data-card-title], .card-title, .titulo, h2, h3, h4, strong') : null;",
+            "      var tituloCard = titleNode ? (titleNode.innerText || titleNode.textContent) : '';",
+            "      tituloCard = (typeof clean === 'function') ? clean(tituloCard || '') : (tituloCard || '');",
+            "      if (tituloCard) { data['tituloCard'] = tituloCard; }",
+        ]
     )
 
 
@@ -98,160 +169,27 @@ def build_tag_template(measurement_case: dict[str, Any]) -> str:
         "  var getClickText = {{JS - Click Text - Btn and A}};",
         "  var getTextClose = {{JS - Function - Get Text Close}};",
         "",
-        f"  var eventData = {{ activo: {_to_js(activo)}, seccion: {_to_js(seccion)} }};",
+        f"  var eventData = {{ activo: {_to_js(activo)}, seccion: {_to_js(seccion)} }}",
         "",
-        "  function resolveHelperValue(helper, node) {",
-        "    var value = helper;",
-        "    if (typeof value === 'function') {",
-        "      try { value = value(node); } catch (err) { value = ''; }",
-        "    }",
-        "    return value || '';",
-        "  }",
-        "",
-        "  function normalizeValue(value, clean) {",
-        "    var result = String(value || '').replace(/\\s+/g, ' ').trim();",
-        "    if (typeof clean === 'function') {",
-        "      result = clean(result || '');",
-        "    }",
-        "    return result || '';",
-        "  }",
-        "",
-        "  function fallbackText(node) {",
-        "    if (!node) { return ''; }",
-        "    return String(node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();",
-        "  }",
-        "",
-        "  function resolveNodeText(node, clean, clickHelper, closeHelper) {",
-        "    var value = resolveHelperValue(clickHelper, node);",
-        "    if (!value) { value = resolveHelperValue(closeHelper, node); }",
-        "    if (!value) { value = fallbackText(node); }",
-        "    return normalizeValue(value, clean);",
-        "  }",
-        "",
-        "  function matchKnownVariant(rawValue, variants, clean) {",
-        "    var normalized = normalizeValue(rawValue, clean);",
-        "    if (!normalized) { return ''; }",
-        "    if (!variants || !variants.length) { return normalized; }",
-        "    for (var i = 0; i < variants.length; i += 1) {",
-        "      var candidate = normalizeValue(variants[i], clean);",
-        "      if (!candidate) { continue; }",
-        "      if (normalized === candidate || normalized.indexOf(candidate) !== -1 || candidate.indexOf(normalized) !== -1) {",
-        "        return candidate;",
-        "      }",
-        "    }",
-        "    return normalized;",
-        "  }",
-        "",
-        "  function collectContextRoots(itemNode, containerNode) {",
-        "    var roots = [];",
-        "    var current = itemNode;",
-        "    while (current && current !== document && roots.length < 6) {",
-        "      roots.push(current);",
-        "      if (containerNode && current === containerNode) { break; }",
-        "      current = current.parentElement;",
-        "    }",
-        "    if (containerNode && roots.indexOf(containerNode) === -1) {",
-        "      roots.push(containerNode);",
-        "    }",
-        "    return roots;",
-        "  }",
-        "",
-        "  function resolveVariantFromContext(itemNode, containerNode, variants, clean) {",
-        "    if (!variants || !variants.length) { return ''; }",
-        "    var roots = collectContextRoots(itemNode, containerNode);",
-        "    for (var i = 0; i < roots.length; i += 1) {",
-        "      var text = normalizeValue(fallbackText(roots[i]), clean);",
-        "      if (!text) { continue; }",
-        "      for (var j = 0; j < variants.length; j += 1) {",
-        "        var candidate = normalizeValue(variants[j], clean);",
-        "        if (candidate && (text === candidate || text.indexOf(candidate) !== -1)) {",
-        "          return candidate;",
-        "        }",
-        "      }",
-        "    }",
-        "    return '';",
-        "  }",
-        "",
-        "  function resolveCardTitle(itemNode, containerNode, clean) {",
-        "    var selectors = ['[data-card-title]', '.card-title', '.title', '.titulo', 'h1', 'h2', 'h3', 'h4', 'h5', 'strong', 'p'];",
-        "    var clickedText = normalizeValue(fallbackText(itemNode), clean);",
-        "    var roots = collectContextRoots(itemNode, containerNode);",
-        "    for (var i = 0; i < roots.length; i += 1) {",
-        "      var root = roots[i];",
-        "      if (!root || !root.querySelectorAll) { continue; }",
-        "      for (var j = 0; j < selectors.length; j += 1) {",
-        "        var candidates = root.querySelectorAll(selectors[j]);",
-        "        for (var k = 0; k < candidates.length; k += 1) {",
-        "          var text = normalizeValue(fallbackText(candidates[k]), clean);",
-        "          if (text && text !== clickedText && text.length > 3) {",
-        "            return text;",
-        "          }",
-        "        }",
-        "      }",
-        "    }",
-        "    return '';",
-        "  }",
-        "",
-        "  function resolveGroupNode(node, itemSelector, containerSelector) {",
-        "    if (!node || typeof node.closest !== 'function') { return { item: null, container: null }; }",
-        "    var itemNode = node.closest(itemSelector);",
-        "    if (!itemNode) { return { item: null, container: null }; }",
-        "    if (!containerSelector) { return { item: itemNode, container: null }; }",
-        "    var containerNode = itemNode.closest(containerSelector);",
-        "    if (!containerNode) { return { item: null, container: null }; }",
-        "    return { item: itemNode, container: containerNode };",
-        "  }",
-        "",
-        "  function resolveGroupValue(rule, itemNode, containerNode, clean, clickHelper, closeHelper) {",
-        "    var clickedText = resolveNodeText(itemNode, clean, clickHelper, closeHelper);",
-        "    var normalizedElement = matchKnownVariant(clickedText, rule.element_variants || [], clean);",
-        "    var titleFromVariants = resolveVariantFromContext(itemNode, containerNode, rule.title_variants || [], clean);",
-        "    var titleFromDom = resolveCardTitle(itemNode, containerNode, clean);",
-        "    var titleValue = titleFromVariants || titleFromDom;",
-        "    var elemento = normalizedElement || clickedText;",
-        "    if (rule.value_extraction_strategy === 'prefer_title_variant_then_click_text' && titleValue) {",
-        "      elemento = titleValue;",
-        "    }",
-        "    return {",
-        "      elemento: elemento || clickedText,",
-        "      titulo_card: titleValue || ''",
-        "    };",
-        "  }",
-        "",
-        "  function setDataEvent(data, e, clean, clickHelper, closeHelper) {",
+        "  function setDataEvent(data, e, cText, clean, getText) {",
     ]
 
     for idx, rule in enumerate(selector_rules):
         prefix = "if" if idx == 0 else "else if"
-        if rule["mode"] == "group":
-            lines.extend(
-                [
-                    f"    {prefix}(resolveGroupNode(e, {_to_js(rule['selector'])}, {_to_js(rule.get('container_selector'))}).item) {{",
-                    f"      var groupRule = {_to_js(rule)};",
-                    "      var groupMatch = resolveGroupNode(e, groupRule.selector, groupRule.container_selector);",
-                    "      var groupValue = resolveGroupValue(groupRule, groupMatch.item, groupMatch.container, clean, clickHelper, closeHelper);",
-                    "      data['elemento'] = groupValue.elemento;",
-                    "      if (groupValue.titulo_card) {",
-                    "        data['titulo_card'] = groupValue.titulo_card;",
-                    "      } else if (data['titulo_card']) {",
-                    "        delete data['titulo_card'];",
-                    "      }",
-                    f"      data['flujo'] = {_to_js(rule['flujo'])};",
-                    f"      data['ubicacion'] = {_to_js(rule['ubicacion'])};",
-                    "",
-                    f"      if (document.location.href.search('appspot.com') == -1) {{analytics.track({_to_js(rule['event_name'])}, data)}};",
-                    "      return;",
-                    "    }",
-                ]
-            )
-            continue
-
         lines.extend(
             [
-                f"    {prefix}(e.closest({_to_js(rule['selector'])})) {{",
-                f"      var matchedNode = e.closest({_to_js(rule['selector'])});",
-                "      data['elemento'] = resolveNodeText(matchedNode, clean, clickHelper, closeHelper);",
-                "      if (data['titulo_card']) { delete data['titulo_card']; }",
+                f"    {prefix}(e.closest({_selector_literal(rule['selector'])})) {{",
+                f"      var item = e.closest({_selector_literal(rule['selector'])});",
+            ]
+        )
+        _append_value_from_item(lines)
+        if rule["is_card"]:
+            _append_card_title_resolution(lines, rule)
+        else:
+            lines.append("      if (data['tituloCard']) { delete data['tituloCard']; }")
+        lines.extend(
+            [
+                "      data['elemento'] = value;",
                 f"      data['flujo'] = {_to_js(rule['flujo'])};",
                 f"      data['ubicacion'] = {_to_js(rule['ubicacion'])};",
                 "",
@@ -268,10 +206,27 @@ def build_tag_template(measurement_case: dict[str, Any]) -> str:
         [
             "  }",
             "",
-            "  setDataEvent(eventData, element, getClean, getClickText, getTextClose);",
+            "  setDataEvent(eventData, element, getClickText, getClean, getTextClose);",
             "</script>",
             "",
         ]
     )
-
     return "\n".join(lines)
+
+
+def summarize_generated_rules(measurement_case: dict[str, Any], tag_template: str | None = None) -> dict[str, Any]:
+    rules = _build_selector_rules(measurement_case)
+    total = len(measurement_case.get("interacciones", []))
+    generated = len(rules)
+    tag_text = tag_template or build_tag_template(measurement_case)
+    forbidden_helpers = [helper for helper in FORBIDDEN_ABSTRACT_HELPERS if helper in tag_text]
+    return {
+        "total_interactions": total,
+        "generated_rules": generated,
+        "generated_rule_coverage": round(generated / total, 4) if total else 0.0,
+        "covered_interaction_indexes": [rule["index"] for rule in rules],
+        "covered_events": [rule["event_name"] for rule in rules],
+        "forbidden_helpers": forbidden_helpers,
+        "uses_json_rule_blob": "var groupRule = {" in tag_text or '"element_variants":' in tag_text,
+        "uses_resolve_group_node": "resolveGroupNode" in tag_text,
+    }

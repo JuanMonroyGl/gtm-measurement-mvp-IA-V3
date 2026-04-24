@@ -15,6 +15,7 @@ from core.cli.context import CaseContext
 from core.cli.errors import UserFacingError
 from core.output_generation.generate_gtm_tag import build_tag_template
 from core.output_generation.generate_trigger import build_consolidated_trigger_selector
+from core.output_generation.golden_compare import compare_with_manual_golden
 from core.output_generation.report_renderer import render_report
 from core.output_generation.run_summary import build_run_summary
 from core.plan_reader.normalize_plan import normalize_case
@@ -148,6 +149,12 @@ def run_case(context: CaseContext) -> dict[str, Any]:
 
     tag_template = build_tag_template(measurement_case)
     trigger_selector = build_consolidated_trigger_selector(measurement_case)
+    golden_comparison = compare_with_manual_golden(
+        repo_root=context.repo_root,
+        case_id=context.case_id,
+        generated_tag=tag_template,
+        generated_trigger=trigger_selector,
+    )
 
     clickable_inventory_payload = {
         "states_captured": dom_snapshot.states_captured,
@@ -166,7 +173,9 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         clickable_inventory=clickable_inventory_payload,
         tag_template=tag_template,
         trigger_selector=trigger_selector,
+        golden_comparison=golden_comparison,
     )
+    case_metrics.update(gate_result.get("generated_rule_summary") or {})
 
     measurement_case_path = output_dir / "measurement_case.json"
     tag_template_path = output_dir / "tag_template.js"

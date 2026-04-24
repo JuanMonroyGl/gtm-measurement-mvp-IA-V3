@@ -43,6 +43,8 @@ def render_report(
     selector_evidence = selector_build_result.get("selector_evidence") or []
     selector_summary = selector_build_result.get("selector_summary") or {}
     state_metadata = selector_build_result.get("state_metadata") or []
+    generated_rule_summary = gate_result.get("generated_rule_summary") or {}
+    golden_comparison = gate_result.get("golden_comparison") or {}
 
     lines = [
         f"# Reporte {case_id}",
@@ -184,6 +186,8 @@ def render_report(
             f"- rejected_for_safety: {case_metrics.get('rejected_for_safety')}",
             f"- human_review_required: {case_metrics.get('human_review_required')}",
             f"- ambiguity_rate: {case_metrics.get('ambiguity_rate')}",
+            f"- generated_rules: {generated_rule_summary.get('generated_rules')}",
+            f"- generated_rule_coverage: {generated_rule_summary.get('generated_rule_coverage')}",
             "",
             "## Gate final",
             f"- passed: {gate_result.get('passed')}",
@@ -193,6 +197,42 @@ def render_report(
         lines.append(f"- gate_error: {error}")
     for warning in gate_result.get("warnings") or []:
         lines.append(f"- gate_warning: {warning}")
+
+    lines.extend(
+        [
+            "",
+            "## Cobertura de tag generado",
+            f"- total_interactions: {generated_rule_summary.get('total_interactions')}",
+            f"- generated_rules: {generated_rule_summary.get('generated_rules')}",
+            f"- generated_rule_coverage: {generated_rule_summary.get('generated_rule_coverage')}",
+            f"- covered_interaction_indexes: {generated_rule_summary.get('covered_interaction_indexes')}",
+            f"- covered_events: {generated_rule_summary.get('covered_events')}",
+            f"- forbidden_helpers: {generated_rule_summary.get('forbidden_helpers')}",
+            f"- uses_json_rule_blob: {generated_rule_summary.get('uses_json_rule_blob')}",
+            f"- uses_resolve_group_node: {generated_rule_summary.get('uses_resolve_group_node')}",
+            "",
+            "## Comparacion con golden manual",
+            f"- available: {golden_comparison.get('available')}",
+        ]
+    )
+    if golden_comparison.get("available"):
+        lines.extend(
+            [
+                f"- tag_path: {golden_comparison.get('tag_path')}",
+                f"- trigger_path: {golden_comparison.get('trigger_path')}",
+                f"- manual_branch_count: {golden_comparison.get('manual_branch_count')}",
+                f"- generated_branch_count: {golden_comparison.get('generated_branch_count')}",
+                f"- manual_events: {golden_comparison.get('manual_events')}",
+                f"- generated_events: {golden_comparison.get('generated_events')}",
+                f"- manual_selector_count: {golden_comparison.get('manual_selector_count')}",
+                f"- generated_selector_count: {golden_comparison.get('generated_selector_count')}",
+                f"- manual_selectors: {golden_comparison.get('manual_selectors')}",
+                f"- generated_selectors: {golden_comparison.get('generated_selectors')}",
+                f"- generated_forbidden_helpers: {golden_comparison.get('generated_forbidden_helpers')}",
+                f"- generated_uses_json_rule_blob: {golden_comparison.get('generated_uses_json_rule_blob')}",
+                f"- generated_uses_abstract_group_logic: {golden_comparison.get('generated_uses_abstract_group_logic')}",
+            ]
+        )
 
     lines.extend(
         [

@@ -48,12 +48,6 @@ def has_stable_discriminator(selector: str | None) -> bool:
     return len(href) >= 4
 
 
-def _last_compound_selector(selector: str | None) -> str:
-    clean = _normalize_selector(selector)
-    parts = [part for part in re.split(r"\s+|>|~|\+", clean) if part]
-    return parts[-1] if parts else ""
-
-
 def is_tag_only_selector(selector: str | None) -> bool:
     clean = _normalize_selector(selector)
     if not clean:
@@ -74,8 +68,6 @@ def is_unsafe_group_selector(selector: str | None) -> bool:
         return True
     if is_tag_only_selector(clean):
         return True
-    if not has_stable_discriminator(_last_compound_selector(clean)):
-        return True
     return not has_stable_discriminator(clean)
 
 
@@ -88,8 +80,6 @@ def selector_safety_blockers(selector: str | None, *, role: str) -> list[str]:
         blockers.append(f"selector_{role} genérico bloqueado: {clean}")
     if is_tag_only_selector(clean):
         blockers.append(f"selector_{role} compuesto solo por tags HTML: {clean}")
-    if not has_stable_discriminator(_last_compound_selector(clean)):
-        blockers.append(f"selector_{role} con nodo clickeable no discriminante: {clean}")
     if not has_stable_discriminator(clean):
         blockers.append(f"selector_{role} sin discriminador estable: {clean}")
     return list(dict.fromkeys(blockers))
