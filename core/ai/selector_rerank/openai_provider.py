@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from openai import OpenAIError
 from pydantic import BaseModel, Field
 
 from core.ai.cache import AICache
@@ -154,6 +155,12 @@ def _normalize_result(parsed: dict[str, Any], warnings: list[str], *, model: str
     }
 
 
+def _response_status_warning(response: Any, prefix: str) -> str:
+    status = getattr(response, "status", None)
+    incomplete_details = getattr(response, "incomplete_details", None)
+    return f"{prefix}: status={status} incomplete_details={incomplete_details}"
+
+
 class OpenAISelectorRerankProvider(SelectorRerankProvider):
     def __init__(self, config: AIConfig) -> None:
         self.config = config
@@ -191,18 +198,23 @@ class OpenAISelectorRerankProvider(SelectorRerankProvider):
         messages = self._build_messages(sanitized_payload)
         warnings: list[str] = []
         try:
-            completion = self.client.beta.chat.completions.parse(
+            response = self.client.responses.parse(
                 model=self.config.model_selector,
-                messages=messages,
-                response_format=SelectorDecision,
-                max_tokens=self.config.max_tokens_selector,
+                input=messages,
+                text_format=SelectorDecision,
+                max_output_tokens=self.config.max_tokens_selector,
+                reasoning={"effort": "minimal"},
             )
-            parsed = completion.choices[0].message.parsed
-            if parsed is None:
-                return {}, ["OpenAI selector_rerank no devolvio SelectorDecision parseable."]
-            return parsed.model_dump(), warnings
-        except (AttributeError, TypeError):
-            warnings.append("Structured Outputs no disponible en este SDK; se usa fallback JSON estricto.")
+            parsed = response.output_parsed
+            if parsed is not None:
+                return parsed.model_dump(), warnings
+            warnings.append("OpenAI selector_rerank no devolvio SelectorDecision parseable.")
+            warnings.append(_response_status_warning(response, "Structured Outputs vacio"))
+        except (AttributeError, TypeError, OpenAIError) as exc:
+            warnings.append(
+                "Structured Outputs via Responses API no disponible o rechazado; "
+                f"se usa fallback JSON estricto. Detalle: {exc}"
+            )
 
         fallback_messages = [
             messages[0],
@@ -222,9 +234,12 @@ class OpenAISelectorRerankProvider(SelectorRerankProvider):
             model=self.config.model_selector,
             input=fallback_messages,
             max_output_tokens=self.config.max_tokens_selector,
+            reasoning={"effort": "minimal"},
         )
         parsed, parse_warnings = _parse_json_object(response.output_text or "")
         warnings.extend(parse_warnings)
+        if not parsed:
+            warnings.append(_response_status_warning(response, "Fallback JSON vacio"))
         return parsed, warnings
 
     def rerank(self, payload: dict) -> dict:
