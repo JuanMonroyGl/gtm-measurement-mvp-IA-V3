@@ -93,14 +93,64 @@ def _build_input(image_path: Path, config: AIConfig) -> list[dict[str, Any]]:
                 {
                     "type": "input_text",
                     "text": (
-                        "Extrae el texto visible de esta imagen de plan de medicion y devuelve una estructura JSON. "
-                        "No inventes valores; usa null o listas vacias cuando algo no sea legible. "
-                        "Incluye extracted_text con el texto lo mas fiel posible. "
-                        "Detecta interacciones con campos tipo_evento, flujo, ubicacion, elemento, "
-                        "element_variants, titulo_card, title_variants, texto_referencia, interaction_mode, "
-                        "group_context, zone_hint, value_extraction_strategy, confidence y warning. "
-                        "Tipos permitidos: Clic Menu, Clic Tab, Clic Card, Clic Boton, Clic Link, Clic Tap. "
-                        "No propongas selectores CSS."
+                        "Eres un extractor estructurado de planes de medicion para GTM. "
+                        "Tu tarea es leer la imagen y devolver datos estructurados compatibles con el esquema ImageExtraction. "
+                        "Extrae unicamente informacion visible o claramente deducible del plan. "
+                        "No inventes campos, URLs, eventos, selectores CSS, nombres de secciones ni textos que no esten en la imagen. "
+                        "Si algo no es legible o no aparece, usa null, lista vacia o agrega un warning claro. "
+                        "Incluye extracted_text con el texto visible de la imagen lo mas fiel posible, respetando eventos, campos, valores, URLs, saltos relevantes y orden visual. "
+                        "Debes detectar interacciones con estos campos cuando existan en el plan: "
+                        "tipo_evento, flujo, ubicacion, elemento, element_variants, titulo_card, title_variants, "
+                        "texto_referencia, interaction_mode, group_context, zone_hint, value_extraction_strategy, confidence y warning. "
+                        "Tipos de evento permitidos: Clic Menu, Clic Tab, Clic Card, Clic Boton, Clic Link, Clic Tap. "
+                        "Usa exactamente esos nombres cuando el plan muestre equivalentes claros. "
+                        "Reglas obligatorias para variantes: "
+                        "Si elemento contiene una plantilla tipo {{...|...}} con dos o mas variantes separadas por |, interaction_mode debe ser \"group\". "
+                        "Extrae cada opcion en element_variants como una lista limpia, sin llaves, sin pipes, sin saltos de linea innecesarios y sin espacios sobrantes. "
+                        "Conserva elemento como plantilla canonica en formato {{variante 1|variante 2|variante 3}} cuando el plan lo muestre como plantilla. "
+                        "Si titulo card, titulo_card o un campo equivalente contiene una plantilla tipo {{...|...}} con dos o mas variantes separadas por |, interaction_mode debe ser \"group\". "
+                        "Extrae cada opcion en title_variants como una lista limpia, sin llaves, sin pipes, sin saltos de linea innecesarios y sin espacios sobrantes. "
+                        "Conserva titulo_card como plantilla canonica cuando el campo exista en el plan. "
+                        "Nunca uses interaction_mode=\"single\" si element_variants tiene mas de un valor. "
+                        "Nunca uses interaction_mode=\"single\" si title_variants tiene mas de un valor. "
+                        "Usa interaction_mode=\"single\" solo cuando la interaccion sea una accion unica clara y no existan multiples variantes. "
+                        "Reglas obligatorias de group_context y zone_hint: "
+                        "Si tipo_evento es \"Clic Menu\" y hay multiples variantes, usa group_context=\"top_navigation\" y zone_hint=\"header-menu\". "
+                        "Si tipo_evento es \"Clic Menu\" y no hay multiples variantes, usa interaction_mode=\"single\" salvo que el plan indique claramente una coleccion. "
+                        "Si tipo_evento es \"Clic Card\" y hay multiples variantes en elemento o titulo_card, "
+                        "usa group_context=\"card_collection\", zone_hint=\"card-grid\" y value_extraction_strategy=\"prefer_title_variant_then_click_text\". "
+                        "Si tipo_evento es \"Clic Tab\" y la ubicacion, titulo de bloque o contexto visible indica una zona de preguntas frecuentes, "
+                        "dudas frecuentes, consultas frecuentes, FAQ, lo mas consultado, temas mas consultados o contenidos de ayuda tipo listado de preguntas, "
+                        "usa group_context=\"faq_collection\" y zone_hint=\"faq-list\". "
+                        "No clasifiques como faq_collection solo porque una variante individual diga \"centro de ayuda\"; debe haber senal de que la zona completa es de preguntas, ayuda o consultas frecuentes. "
+                        "Si tipo_evento es \"Clic Tab\" y la interaccion representa accesos rapidos, atajos, opciones horizontales, tabs del medio, carrusel de accesos, "
+                        "botones con iconos, modulos de navegacion intermedia o shortcuts, usa group_context=\"shortcut_collection\" y zone_hint=\"shortcut-tabs\". "
+                        "Si tipo_evento es \"Clic Tab\" pero no hay evidencia suficiente para decidir entre faq_collection y shortcut_collection, "
+                        "usa group_context=\"generic_tab_collection\" y zone_hint=\"generic-tabs\", con warning breve explicando la ambiguedad. "
+                        "Reglas de value_extraction_strategy: "
+                        "Para Clic Menu grupal usa \"match_element_variant_from_clicked_text\". "
+                        "Para Clic Tab grupal usa \"match_element_variant_from_clicked_text\". "
+                        "Para Clic Card con title_variants usa \"prefer_title_variant_then_click_text\". "
+                        "Para Clic Card sin title_variants usa \"match_element_variant_from_clicked_text\" si hay variantes de elemento. "
+                        "Para interacciones single usa \"click_text\" salvo que el plan indique otra logica clara. "
+                        "Reglas de normalizacion: "
+                        "Limpia espacios dobles, saltos internos innecesarios y fragmentos partidos por OCR, pero conserva el sentido exacto del texto. "
+                        "No unas varias variantes en un unico string. "
+                        "No dejes element_variants vacio si elemento contiene opciones separadas por |. "
+                        "No dejes title_variants vacio si titulo_card contiene opciones separadas por |. "
+                        "No elimines palabras importantes de elemento, ubicacion, flujo, titulo_card ni texto_referencia. "
+                        "No conviertas un grupo de variantes en una sola frase resumida. "
+                        "Reglas de confianza y warnings: "
+                        "Usa confidence alto solo si el texto del plan se lee con claridad. "
+                        "Si aplicas reglas estructurales evidentes del plan, no lo marques como warning. "
+                        "Agrega warning solo si hay texto ilegible, conflicto entre campos, evento incompleto, clasificacion ambigua o inferencia debil. "
+                        "Restricciones estrictas: "
+                        "No propongas selectores CSS. "
+                        "No analices DOM. "
+                        "No generes codigo GTM. "
+                        "No uses informacion del HTML, del golden, de archivos manuales ni de casos previos. "
+                        "No sobreajustes la salida a un caso especifico. "
+                        "Solo extrae y estructura el plan de medicion visible en la imagen."
                     ),
                 },
                 {
@@ -111,6 +161,85 @@ def _build_input(image_path: Path, config: AIConfig) -> list[dict[str, Any]]:
             ],
         }
     ]
+
+
+def _normalize_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _postprocess_interaction(interaction: dict[str, Any]) -> dict[str, Any]:
+    item = dict(interaction)
+    warnings = []
+    if item.get("warning"):
+        warnings.append(str(item["warning"]))
+
+    element_variants = [str(value).strip() for value in (item.get("element_variants") or []) if str(value).strip()]
+    title_variants = [str(value).strip() for value in (item.get("title_variants") or []) if str(value).strip()]
+    item["element_variants"] = element_variants
+    item["title_variants"] = title_variants
+
+    has_group_variants = len(element_variants) > 1 or len(title_variants) > 1
+    if has_group_variants and item.get("interaction_mode") != "group":
+        item["interaction_mode"] = "group"
+        warnings.append("interaction_mode corregido a group por multiples variantes.")
+    elif not item.get("interaction_mode"):
+        item["interaction_mode"] = "group" if has_group_variants else "single"
+
+    event_type = _normalize_text(item.get("tipo_evento"))
+    location = _normalize_text(item.get("ubicacion"))
+    context_text = _normalize_text(
+        " ".join(
+            [
+                str(item.get("elemento") or ""),
+                str(item.get("titulo_card") or ""),
+                location,
+                " ".join(element_variants),
+                " ".join(title_variants),
+            ]
+        )
+    )
+
+    if item["interaction_mode"] == "group" and event_type == "clic menu":
+        item["group_context"] = item.get("group_context") or "top_navigation"
+        item["zone_hint"] = item.get("zone_hint") or "header-menu"
+        item["value_extraction_strategy"] = item.get("value_extraction_strategy") or "match_element_variant_from_clicked_text"
+    if item["interaction_mode"] == "group" and event_type == "clic card":
+        item["group_context"] = item.get("group_context") or "card_collection"
+        item["zone_hint"] = item.get("zone_hint") or "card-grid"
+        if title_variants:
+            item["value_extraction_strategy"] = "prefer_title_variant_then_click_text"
+        else:
+            item["value_extraction_strategy"] = item.get("value_extraction_strategy") or "match_element_variant_from_clicked_text"
+    if item["interaction_mode"] == "group" and event_type == "clic tab":
+        faq_signals = ("preguntas", "frecuentes", "faq", "consultado", "consultas", "ayuda")
+        strong_faq_signals = ("preguntas", "frecuentes", "faq", "consultado", "consultas")
+        shortcut_signals = ("tab", "tabs", "atajo", "acceso", "rapido", "icono", "medio", "shortcut", "carrusel")
+        if any(signal in context_text for signal in strong_faq_signals) or (
+            "ayuda" in context_text and "centro de ayuda" not in context_text
+        ):
+            item["group_context"] = item.get("group_context") or "faq_collection"
+            item["zone_hint"] = item.get("zone_hint") or "faq-list"
+        elif any(signal in context_text for signal in shortcut_signals):
+            item["group_context"] = item.get("group_context") or "shortcut_collection"
+            item["zone_hint"] = item.get("zone_hint") or "shortcut-tabs"
+        else:
+            item["group_context"] = item.get("group_context") or "generic_tab_collection"
+            item["zone_hint"] = item.get("zone_hint") or "generic-tabs"
+            warnings.append("clasificacion tab grupal ambigua.")
+        item["value_extraction_strategy"] = item.get("value_extraction_strategy") or "match_element_variant_from_clicked_text"
+
+    item["warning"] = "; ".join(dict.fromkeys(warnings)) if warnings else None
+    return item
+
+
+def _postprocess_parsed_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(payload)
+    cleaned["interactions"] = [
+        _postprocess_interaction(interaction)
+        for interaction in (cleaned.get("interactions") or [])
+        if isinstance(interaction, dict)
+    ]
+    return cleaned
 
 
 def _extract_one_image(*, image_path: Path, config: AIConfig) -> dict[str, Any]:
@@ -130,7 +259,7 @@ def _extract_one_image(*, image_path: Path, config: AIConfig) -> dict[str, Any]:
             warnings.append("OpenAI no devolvio ImageExtraction parseable.")
             parsed_payload = ImageExtraction(warnings=warnings).model_dump()
         else:
-            parsed_payload = parsed.model_dump()
+            parsed_payload = _postprocess_parsed_payload(parsed.model_dump())
             parsed_payload["warnings"] = list(dict.fromkeys([*parsed_payload.get("warnings", []), *warnings]))
         return {
             "image_path": str(image_path),
