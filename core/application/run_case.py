@@ -66,6 +66,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         native_text_entries=native_text_entries,
     )
     metadata = resolved_case["resolved_metadata"]
+    parsed_plan = resolved_case["parsed_plan"]
     output_dir = ensure_output_dir(context.repo_root, context.case_id)
     ai_config = AIConfig.from_env()
     ai_image_parse_result: dict[str, Any] | None = None
@@ -75,11 +76,16 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         for path in Path(prepared_images_dir).iterdir()
         if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
     )
-    if image_paths:
+    image_evidence = parsed_plan.get("evidence") or []
+    if image_paths or native_text_entries or image_evidence:
         provider = image_parse_provider(ai_config)
-        ai_image_parse_result = provider.parse(case_id=context.case_id, image_paths=image_paths)
+        ai_image_parse_result = provider.parse(
+            case_id=context.case_id,
+            image_paths=image_paths,
+            native_text_entries=native_text_entries,
+            image_evidence=image_evidence,
+        )
 
-    parsed_plan = resolved_case["parsed_plan"]
     if ai_image_parse_result:
         parsed_plan["ai_extraction"] = ai_image_parse_result
     measurement_case = normalize_case(metadata=metadata, parsed_plan=parsed_plan)
@@ -94,13 +100,13 @@ def run_case(context: CaseContext) -> dict[str, Any]:
                     "activo": ai_parsed.get("activo") or metadata.get("activo"),
                     "seccion": ai_parsed.get("seccion") or metadata.get("seccion"),
                     "flujo": item.get("flujo"),
-                    "elemento": None,
+                    "elemento": item.get("elemento"),
                     "interaction_mode": item.get("interaction_mode") or "single",
-                    "element_variants": None,
-                    "title_variants": None,
+                    "element_variants": item.get("element_variants") or None,
+                    "title_variants": item.get("title_variants") or None,
                     "group_context": item.get("group_context"),
                     "zone_hint": item.get("zone_hint"),
-                    "value_extraction_strategy": "click_text",
+                    "value_extraction_strategy": item.get("value_extraction_strategy") or "click_text",
                     "ubicacion": item.get("ubicacion"),
                     "plan_url": metadata.get("plan_url"),
                     "target_url": metadata.get("target_url"),

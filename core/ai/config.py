@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
 
 def _as_bool(value: str, default: bool = False) -> bool:
     if value is None:
@@ -31,9 +33,10 @@ class AIConfig:
 
     @classmethod
     def from_env(cls) -> "AIConfig":
+        load_dotenv()
         return cls(
             enabled=_as_bool(os.getenv("AI_ENABLED", "false")),
-            provider=os.getenv("AI_PROVIDER", "openai"),
+            provider=os.getenv("AI_PROVIDER", "openai").strip().lower(),
             enable_image_parse=_as_bool(os.getenv("AI_ENABLE_IMAGE_PARSE", "false")),
             enable_dom_explorer=_as_bool(os.getenv("AI_ENABLE_DOM_EXPLORER", "false")),
             enable_selector_rerank=_as_bool(os.getenv("AI_ENABLE_SELECTOR_RERANK", "false")),
@@ -49,3 +52,16 @@ class AIConfig:
             max_tokens_selector=int(os.getenv("AI_MAX_OUTPUT_TOKENS_SELECTOR", "350")),
             cache_dir=os.getenv("AI_CACHE_DIR", ".cache/ai"),
         )
+
+    def safe_diagnostics(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "provider": self.provider,
+            "enable_image_parse": self.enable_image_parse,
+            "enable_selector_rerank": self.enable_selector_rerank,
+            "enable_dom_explorer": self.enable_dom_explorer,
+            "model_image": self.model_image,
+            "model_selector": self.model_selector,
+            "cache_dir": self.cache_dir,
+            "openai_api_key_present": "OPENAI_API_KEY" in os.environ,
+        }
