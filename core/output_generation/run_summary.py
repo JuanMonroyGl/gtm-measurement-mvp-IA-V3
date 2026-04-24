@@ -21,6 +21,7 @@ def build_run_summary(
     render_engine: str | None = None,
     selector_metrics: dict[str, Any] | None = None,
     gate_result: dict[str, Any] | None = None,
+    ai_selector_rerank: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "case_id": context.case_id,
@@ -44,6 +45,7 @@ def build_run_summary(
         "interactions_detected": interactions_detected,
         "ambiguity_detected": ambiguity_detected,
         "selector_metrics": selector_metrics or {},
+        "ai_selector_rerank": ai_selector_rerank or {},
         "gate": gate_result or {},
         "outputs_generated": outputs_generated or {},
         "warnings": warning_messages,

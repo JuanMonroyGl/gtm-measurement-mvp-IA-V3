@@ -21,4 +21,8 @@ def dom_explorer_provider(config: AIConfig):
 
 
 def selector_rerank_provider(config: AIConfig):
+    if config.enabled and config.enable_selector_rerank and config.provider == "openai":
+        from core.ai.selector_rerank.openai_provider import OpenAISelectorRerankProvider
+
+        return OpenAISelectorRerankProvider(config)
     return NoopSelectorRerankProvider()

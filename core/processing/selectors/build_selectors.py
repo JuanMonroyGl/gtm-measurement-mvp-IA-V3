@@ -21,6 +21,8 @@ NODE_ID_ATTR = "data-gtm-mvp-node-id"
 SELECTOR_ORIGIN_RENDERED = "observed_rendered_dom"
 SELECTOR_ORIGIN_FALLBACK = "raw_html_fallback"
 SELECTOR_ORIGIN_REJECTED = "rejected"
+SELECTOR_SOURCE_DETERMINISTIC = "deterministic"
+SELECTOR_SOURCE_AI_RERANK = "ai_rerank"
 SELECTOR_TYPE_WEIGHTS = {
     "id": 100,
     "data": 80,
@@ -1186,15 +1188,226 @@ def _select_group_interaction(
     return (traces[0] if traces else None), traces
 
 
+def _safe_ai_text(value: Any, limit: int = 700) -> Any:
+    if isinstance(value, str):
+        return value[:limit]
+    if isinstance(value, list):
+        return [_safe_ai_text(item, limit) for item in value[:10]]
+    if isinstance(value, dict):
+        return {str(key): _safe_ai_text(item, limit) for key, item in value.items()}
+    return value
+
+
+def _ai_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    safety_blockers: list[str] = []
+    selector = candidate.get("selector_item") or candidate.get("selector")
+    container_selector = candidate.get("selector_contenedor")
+    safety_blockers.extend(selector_safety_blockers(selector, role="item"))
+    if container_selector:
+        safety_blockers.extend(selector_safety_blockers(container_selector, role="contenedor"))
+    return {
+        "selector": candidate.get("selector"),
+        "selector_source": candidate.get("selector_source"),
+        "selector_origin": candidate.get("selector_origin"),
+        "selector_item": candidate.get("selector_item"),
+        "selector_contenedor": candidate.get("selector_contenedor"),
+        "match_count": candidate.get("match_count"),
+        "container_match_count": candidate.get("container_match_count"),
+        "variant_coverage": candidate.get("variant_coverage"),
+        "visible_text": _safe_ai_text(candidate.get("visible_text")),
+        "outer_html_excerpt": _safe_ai_text(candidate.get("outer_html_excerpt")),
+        "safety_blockers": list(dict.fromkeys(safety_blockers)),
+        "promotion_blockers": _safe_ai_text(candidate.get("promotion_blockers") or []),
+        "source": candidate.get("selector_source"),
+        "origin": candidate.get("selector_origin"),
+        "card_mapping": _safe_ai_text(candidate.get("card_mapping") or []),
+        "matched_variants": _safe_ai_text(candidate.get("matched_variants") or []),
+        "group_item_count": candidate.get("group_item_count"),
+        "candidate_group_item_count": candidate.get("candidate_group_item_count"),
+        "exists_in_dom": candidate.get("exists_in_dom"),
+        "closest_runtime_supported": candidate.get("closest_runtime_supported"),
+        "click_grounded": candidate.get("click_grounded"),
+    }
+
+
+def _build_ai_rerank_payload(
+    *,
+    case_id: str | None,
+    interaction_index: int,
+    interaction: dict[str, Any],
+    traces: list[dict[str, Any]],
+) -> dict[str, Any]:
+    considered = [_ai_candidate_payload(trace) for trace in traces[:25]]
+    allowed_selectors = []
+    for trace in traces:
+        for key in ("selector", "selector_item", "selector_contenedor"):
+            value = trace.get(key)
+            if value:
+                allowed_selectors.append(str(value))
+    return {
+        "case_id": case_id,
+        "interaction_index": interaction_index,
+        "tipo_evento": interaction.get("tipo_evento"),
+        "flujo": interaction.get("flujo"),
+        "ubicacion": interaction.get("ubicacion"),
+        "group_context": interaction.get("group_context"),
+        "zone_hint": interaction.get("zone_hint"),
+        "element_variants": interaction.get("element_variants") or [],
+        "title_variants": interaction.get("title_variants") or [],
+        "allowed_selectors": list(dict.fromkeys(allowed_selectors)),
+        "candidates_considered": considered,
+        "rejected_candidates": [item for item in considered if item.get("promotion_blockers")],
+    }
+
+
+def _selected_ai_candidate(ai_result: dict[str, Any], traces: list[dict[str, Any]]) -> dict[str, Any] | None:
+    selected_values = {
+        str(value).strip()
+        for value in (
+            ai_result.get("selected_selector"),
+            ai_result.get("selected_item_selector"),
+        )
+        if value
+    }
+    if not selected_values:
+        return None
+    for trace in traces:
+        trace_values = {
+            str(value).strip()
+            for value in (trace.get("selector"), trace.get("selector_item"))
+            if value
+        }
+        if selected_values & trace_values:
+            selected_container = str(ai_result.get("selected_container_selector") or "").strip()
+            trace_container = str(trace.get("selector_contenedor") or "").strip()
+            if selected_container and selected_container != trace_container:
+                continue
+            return trace
+    return None
+
+
+def _ai_allowed_to_override_blocker(blocker: str, *, has_card_mapping: bool) -> bool:
+    normalized = _normalize(blocker)
+    if not has_card_mapping:
+        return False
+    return "variant_coverage insuficiente" in normalized or "card_collection sin titulo" in normalized
+
+
+def _validate_ai_candidate(
+    *,
+    interaction: dict[str, Any],
+    candidate: dict[str, Any],
+    ai_result: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    warnings: list[str] = []
+    selector = candidate.get("selector_item") or candidate.get("selector")
+    container_selector = candidate.get("selector_contenedor")
+    interaction_mode = str(interaction.get("interaction_mode") or "single").lower()
+    group_context = _normalize(interaction.get("group_context"))
+
+    if ai_result.get("requires_human_review"):
+        return None, ["AI selector_rerank no recomendo autopromocion; mantiene human_review_required=true."]
+    if not selector:
+        return None, ["AI selector_rerank no devolvio selector_item/selector seleccionado."]
+    if candidate.get("selector_origin") != SELECTOR_ORIGIN_RENDERED:
+        return None, ["AI selector_rerank rechazado: selector no proviene de DOM renderizado."]
+
+    safety_blockers = selector_safety_blockers(selector, role="item")
+    if container_selector:
+        safety_blockers.extend(selector_safety_blockers(container_selector, role="contenedor"))
+    if safety_blockers:
+        return None, ["AI selector_rerank rechazado por safety_blockers: " + "; ".join(safety_blockers)]
+
+    if not candidate.get("exists_in_dom"):
+        return None, ["AI selector_rerank rechazado: selector no existe en DOM renderizado."]
+    if not candidate.get("closest_runtime_supported") or not candidate.get("click_grounded"):
+        return None, ["AI selector_rerank rechazado: selector no queda soportado por closest/click_grounded."]
+
+    match_count = int(candidate.get("match_count") or 0)
+    if interaction_mode == "single" and match_count != 1:
+        return None, [f"AI selector_rerank rechazado: selector single ambiguo ({match_count} matches)."]
+    if interaction_mode == "group" and match_count < 2:
+        return None, ["AI selector_rerank rechazado: selector grupal cubre menos de 2 items."]
+
+    expected_variants = _expected_group_variants(interaction)
+    if interaction_mode == "group":
+        item_limit = group_match_limit(len(expected_variants), candidate.get("candidate_group_item_count"))
+        if match_count > item_limit:
+            return None, [f"AI selector_rerank rechazado: match_count excesivo ({match_count})."]
+        if int(candidate.get("container_match_count") or 0) > container_match_limit():
+            return None, [
+                "AI selector_rerank rechazado: container_match_count excesivo "
+                f"({candidate.get('container_match_count')})."
+            ]
+        if not useful_visible_text(candidate.get("visible_text")):
+            return None, ["AI selector_rerank rechazado: visible_text vacio o sin senales utiles."]
+
+    card_mapping = list(candidate.get("card_mapping") or [])
+    if group_context == "card_collection" and not card_mapping:
+        return None, ["AI selector_rerank rechazado: card_collection sin card_mapping derivado de evidencia."]
+
+    promotion_blockers = [str(item) for item in (candidate.get("promotion_blockers") or [])]
+    remaining_blockers = [
+        blocker
+        for blocker in promotion_blockers
+        if not _ai_allowed_to_override_blocker(blocker, has_card_mapping=bool(card_mapping))
+    ]
+    if remaining_blockers:
+        return None, ["AI selector_rerank rechazado por blockers no resolubles: " + "; ".join(remaining_blockers)]
+
+    accepted = dict(candidate)
+    accepted["selector_source"] = SELECTOR_SOURCE_AI_RERANK
+    accepted["ai_rerank_confidence"] = ai_result.get("confidence")
+    accepted["ai_rerank_reason"] = ai_result.get("reason")
+    accepted["ai_overridden_blockers"] = [
+        blocker for blocker in promotion_blockers if blocker not in remaining_blockers
+    ]
+    accepted["promotion_blockers"] = []
+    accepted["can_promote"] = True
+    if group_context == "card_collection" and int(accepted.get("variant_coverage") or 0) <= 0:
+        accepted["variant_coverage"] = len(card_mapping)
+        accepted["variant_coverage_source"] = "card_mapping"
+        accepted["matched_variants"] = list(
+            dict.fromkeys(
+                [
+                    value
+                    for mapping in card_mapping
+                    for value in (mapping.get("elemento"), mapping.get("tituloCard"))
+                    if value
+                ]
+            )
+        )
+    return accepted, warnings
+
+
+def _empty_ai_rerank_artifact(provider: Any | None) -> dict[str, Any]:
+    provider_class = provider.__class__.__name__ if provider is not None else "NoopSelectorRerankProvider"
+    provider_name = "openai" if provider_class == "OpenAISelectorRerankProvider" else "noop"
+    config = getattr(provider, "config", None)
+    warnings = [] if provider_name == "openai" else ["AI selector_rerank desactivado; provider=noop."]
+    return {
+        "attempted": False,
+        "provider": provider_name,
+        "model": getattr(config, "model_selector", None),
+        "interactions": [],
+        "selected_count": 0,
+        "accepted_count": 0,
+        "warnings": warnings,
+    }
+
+
 def propose_selectors(
     measurement_case: dict[str, Any],
     dom_snapshot: dict[str, Any],
     manual_selector_hints: dict[str, Any] | None = None,
+    selector_rerank_provider: Any | None = None,
+    case_id: str | None = None,
 ) -> dict[str, Any]:
     state_html = dom_snapshot.get("state_html") or {}
     soups = {state: BeautifulSoup(html, "lxml") for state, html in state_html.items()}
     inventory = [item for item in (dom_snapshot.get("clickable_inventory") or []) if item.get("is_clickable")]
     render_engine = str(dom_snapshot.get("render_engine") or "none")
+    ai_rerank_artifact = _empty_ai_rerank_artifact(selector_rerank_provider)
 
     if not state_html or not inventory:
         selector_evidence = []
@@ -1212,6 +1425,7 @@ def propose_selectors(
                     "index": idx,
                     "selector": None,
                     "selector_origin": SELECTOR_ORIGIN_REJECTED,
+                    "selector_source": SELECTOR_ORIGIN_REJECTED,
                     "human_review_required": True,
                     "promoted": False,
                     "rejection_reason": "no hay inventario renderizado utilizable",
@@ -1228,6 +1442,7 @@ def propose_selectors(
             "selector_summary": _selector_trace_summary(selector_evidence),
             "state_metadata": dom_snapshot.get("state_metadata") or [],
             "manual_selector_hints": manual_selector_hints or {"available": False, "selectors": []},
+            "ai_selector_rerank": ai_rerank_artifact,
         }
 
     selector_evidence: list[dict[str, Any]] = []
@@ -1252,6 +1467,79 @@ def propose_selectors(
                 dom_snapshot=dom_snapshot,
             )
 
+        ai_rerank_record: dict[str, Any] | None = None
+        can_attempt_ai = (
+            interaction_mode == "group"
+            and selector_rerank_provider is not None
+            and selector_rerank_provider.__class__.__name__ != "NoopSelectorRerankProvider"
+            and bool(traces)
+            and (not chosen or not chosen.get("can_promote"))
+        )
+        if can_attempt_ai:
+            ai_rerank_artifact["attempted"] = True
+            payload = _build_ai_rerank_payload(
+                case_id=case_id,
+                interaction_index=index,
+                interaction=interaction,
+                traces=traces,
+            )
+            ai_rerank_record = {
+                "index": index,
+                "attempted": True,
+                "accepted_after_validation": False,
+                "selected": None,
+                "rejected": [],
+                "reason": None,
+                "requires_human_review": True,
+                "cache_hit": False,
+                "warnings": [],
+            }
+            try:
+                ai_result = selector_rerank_provider.rerank(payload)
+                selected_payload = {
+                    "selected_selector": ai_result.get("selected_selector"),
+                    "selected_container_selector": ai_result.get("selected_container_selector"),
+                    "selected_item_selector": ai_result.get("selected_item_selector"),
+                    "confidence": ai_result.get("confidence"),
+                }
+                if not (selected_payload["selected_selector"] or selected_payload["selected_item_selector"]):
+                    selected_payload = None
+                ai_rerank_record.update(
+                    {
+                        "provider": ai_result.get("provider"),
+                        "model": ai_result.get("model"),
+                        "selected": selected_payload,
+                        "rejected": ai_result.get("rejects") or [],
+                        "reason": ai_result.get("reason"),
+                        "requires_human_review": ai_result.get("requires_human_review"),
+                        "cache_hit": bool(ai_result.get("cache_hit")),
+                        "warnings": list(ai_result.get("warnings") or []),
+                    }
+                )
+                ai_rerank_artifact["provider"] = ai_result.get("provider") or ai_rerank_artifact["provider"]
+                ai_rerank_artifact["model"] = ai_result.get("model") or ai_rerank_artifact["model"]
+                selected_candidate = _selected_ai_candidate(ai_result, traces)
+                if selected_candidate is None and not ai_result.get("requires_human_review"):
+                    ai_rerank_record["warnings"].append(
+                        "AI selector_rerank eligio un selector que no coincide literalmente con candidatos existentes."
+                    )
+                if selected_candidate is not None:
+                    accepted_candidate, acceptance_warnings = _validate_ai_candidate(
+                        interaction=interaction,
+                        candidate=selected_candidate,
+                        ai_result=ai_result,
+                    )
+                    ai_rerank_record["warnings"].extend(acceptance_warnings)
+                    if accepted_candidate is not None:
+                        chosen = accepted_candidate
+                        ai_rerank_record["accepted_after_validation"] = True
+                        ai_rerank_artifact["accepted_count"] += 1
+                if ai_result.get("selected_selector") or ai_result.get("selected_item_selector"):
+                    ai_rerank_artifact["selected_count"] += 1
+            except Exception as exc:
+                ai_rerank_record["warnings"].append(f"AI selector_rerank fallo sin abortar el pipeline: {exc}")
+            ai_rerank_artifact["interactions"].append(ai_rerank_record)
+
         if not chosen:
             interaction["selector_candidato"] = None
             interaction["selector_contenedor"] = None
@@ -1266,11 +1554,16 @@ def propose_selectors(
                     "index": index,
                     "selector": None,
                     "selector_origin": SELECTOR_ORIGIN_REJECTED,
+                    "selector_source": SELECTOR_ORIGIN_REJECTED,
                     "human_review_required": True,
                     "promoted": False,
                     "rejection_reason": "no hay candidatos con existencia en DOM y alineación suficiente",
                     "candidates_considered": len(traces),
                     "candidates": traces[:10],
+                    "ai_rerank_attempted": bool(ai_rerank_record),
+                    "ai_rerank_selected": bool((ai_rerank_record or {}).get("selected")),
+                    "ai_rerank_reason": (ai_rerank_record or {}).get("reason"),
+                    "ai_rerank_requires_human_review": (ai_rerank_record or {}).get("requires_human_review", True),
                 }
             )
             if interaction_mode == "group":
@@ -1287,12 +1580,14 @@ def propose_selectors(
             interaction["selector_contenedor"] = chosen.get("selector_contenedor")
             interaction["selector_item"] = chosen.get("selector_item") or selector
             interaction["selector_activador"] = f"{selector}, {selector} *"
-            if chosen.get("selector_source") == MANUAL_GOLDEN_HINT_SOURCE:
+            if chosen.get("selector_source") in {MANUAL_GOLDEN_HINT_SOURCE, SELECTOR_SOURCE_AI_RERANK}:
                 interaction["selector_metadata"] = {
-                    "selector_source": MANUAL_GOLDEN_HINT_SOURCE,
+                    "selector_source": chosen.get("selector_source"),
                     "hint_file": chosen.get("hint_file"),
                     "card_mapping": chosen.get("card_mapping") or [],
                 }
+                if chosen.get("ai_rerank_reason"):
+                    interaction["selector_metadata"]["ai_rerank_reason"] = chosen.get("ai_rerank_reason")
         else:
             interaction["selector_candidato"] = None
             interaction["selector_contenedor"] = None
@@ -1317,12 +1612,19 @@ def propose_selectors(
                 f"Interacción grupal modelada con selector_contenedor={chosen.get('selector_contenedor')} y selector_item={chosen.get('selector_item')}."
             )
 
+        final_selector_source = SELECTOR_ORIGIN_REJECTED
+        if promoted:
+            if chosen.get("selector_source") in {MANUAL_GOLDEN_HINT_SOURCE, SELECTOR_SOURCE_AI_RERANK}:
+                final_selector_source = chosen.get("selector_source")
+            else:
+                final_selector_source = SELECTOR_SOURCE_DETERMINISTIC
+
         selector_evidence.append(
             {
                 "index": index,
                 "selector": chosen.get("selector") if promoted else None,
                 "selector_origin": chosen.get("selector_origin") or SELECTOR_ORIGIN_REJECTED,
-                "selector_source": chosen.get("selector_source") or "automatic",
+                "selector_source": final_selector_source,
                 "hint_file": chosen.get("hint_file"),
                 "human_review_required": (not promoted) or (
                     interaction_mode == "single" and chosen.get("match_count") != 1
@@ -1332,6 +1634,10 @@ def propose_selectors(
                 "chosen": chosen,
                 "candidates_considered": len(traces),
                 "candidates": traces[:10],
+                "ai_rerank_attempted": bool(ai_rerank_record),
+                "ai_rerank_selected": bool((ai_rerank_record or {}).get("selected")),
+                "ai_rerank_reason": (ai_rerank_record or {}).get("reason"),
+                "ai_rerank_requires_human_review": (ai_rerank_record or {}).get("requires_human_review", True),
             }
         )
 
@@ -1348,4 +1654,5 @@ def propose_selectors(
         "selector_summary": _selector_trace_summary(selector_evidence),
         "state_metadata": dom_snapshot.get("state_metadata") or [],
         "manual_selector_hints": manual_selector_hints or {"available": False, "selectors": []},
+        "ai_selector_rerank": ai_rerank_artifact,
     }

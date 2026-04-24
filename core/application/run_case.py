@@ -9,7 +9,7 @@ from typing import Any
 from core.application.inspect_case import inspect_case_input_structure
 from core.application.resolve_case_input import resolve_case_input
 from core.ai.config import AIConfig
-from core.ai.registry import image_parse_provider
+from core.ai.registry import image_parse_provider, selector_rerank_provider
 from core.checks.output_gate import evaluate_output_gate
 from core.cli.context import CaseContext
 from core.cli.errors import UserFacingError
@@ -136,11 +136,14 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         case_id=context.case_id,
     )
     manual_selector_hints = load_manual_selector_hints(context.repo_root, context.case_id)
+    ai_selector_rerank_provider = selector_rerank_provider(ai_config)
 
     selector_build_result = propose_selectors(
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
         manual_selector_hints=manual_selector_hints,
+        selector_rerank_provider=ai_selector_rerank_provider,
+        case_id=context.case_id,
     )
     selector_build_result["render_engine"] = dom_snapshot.render_engine
     selector_build_result["states_captured"] = dom_snapshot.states_captured
@@ -152,6 +155,49 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         dom_snapshot=dom_snapshot.__dict__,
         selector_evidence=selector_build_result.get("selector_evidence"),
     )
+    selector_evidence = selector_build_result.get("selector_evidence") or []
+    evidence_by_index = {
+        int(item.get("index")): item
+        for item in selector_evidence
+        if item.get("index")
+    }
+    for index, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
+        evidence = evidence_by_index.get(index)
+        if not evidence:
+            continue
+        if not interaction.get("selector_candidato"):
+            evidence["selector"] = None
+            evidence["promoted"] = False
+            evidence["human_review_required"] = True
+            evidence["selector_source"] = "rejected"
+            if not evidence.get("rejection_reason"):
+                evidence["rejection_reason"] = "selector rechazado por validacion final"
+    selector_build_result["selector_summary"] = {
+        "total_interactions": len(selector_evidence),
+        "promoted_selectors": sum(1 for item in selector_evidence if item.get("promoted")),
+        "human_review_required": sum(1 for item in selector_evidence if item.get("human_review_required")),
+        "origins": {
+            origin: sum(1 for item in selector_evidence if (item.get("selector_origin") or "rejected") == origin)
+            for origin in ("observed_rendered_dom", "raw_html_fallback", "rejected")
+        },
+    }
+    ai_selector_rerank_artifact = selector_build_result.get("ai_selector_rerank") or {}
+    interactions_by_index = {
+        index: interaction
+        for index, interaction in enumerate(measurement_case.get("interacciones", []), start=1)
+    }
+    final_ai_accepts = 0
+    for ai_item in ai_selector_rerank_artifact.get("interactions") or []:
+        interaction = interactions_by_index.get(int(ai_item.get("index") or 0), {})
+        accepted = bool(
+            interaction.get("selector_candidato")
+            and (interaction.get("selector_metadata") or {}).get("selector_source") == "ai_rerank"
+        )
+        ai_item["accepted_after_validation"] = accepted
+        if accepted:
+            final_ai_accepts += 1
+    if ai_selector_rerank_artifact:
+        ai_selector_rerank_artifact["accepted_count"] = final_ai_accepts
     case_metrics = compute_case_metrics(measurement_case, selector_build_result.get("selector_evidence"))
     schema_validation = validate_measurement_case_schema(repo_root=context.repo_root, measurement_case=measurement_case)
     if not schema_validation.valid:
@@ -188,6 +234,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         "selector_summary": selector_build_result.get("selector_summary") or {},
         "selector_evidence": selector_build_result.get("selector_evidence") or [],
         "manual_selector_hints": selector_build_result.get("manual_selector_hints") or {},
+        "ai_selector_rerank": selector_build_result.get("ai_selector_rerank") or {},
     }
     gate_result = evaluate_output_gate(
         measurement_case=measurement_case,
@@ -208,6 +255,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     clickable_inventory_path = output_dir / "clickable_inventory.json"
     selector_trace_path = output_dir / "selector_trace.json"
     ai_extraction_path = output_dir / "ai_extraction.json"
+    ai_selector_rerank_path = output_dir / "ai_selector_rerank.json"
 
     with measurement_case_path.open("w", encoding="utf-8") as file_handle:
         json.dump(measurement_case, file_handle, ensure_ascii=False, indent=2)
@@ -227,6 +275,10 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             json.dumps(ai_image_parse_result, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+    ai_selector_rerank_path.write_text(
+        json.dumps(selector_build_result.get("ai_selector_rerank") or {}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     resolved_case_input_path.write_text(
         json.dumps(
             {
@@ -266,6 +318,10 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     warning_messages.extend(resolved_case.get("messages") or [])
     warning_messages.extend(parsed_plan.get("warnings") or [])
     warning_messages.extend(selector_build_result.get("warnings") or [])
+    ai_selector_rerank = selector_build_result.get("ai_selector_rerank") or {}
+    warning_messages.extend(ai_selector_rerank.get("warnings") or [])
+    for ai_item in ai_selector_rerank.get("interactions") or []:
+        warning_messages.extend(ai_item.get("warnings") or [])
     warning_messages.extend(selector_validation.get("warnings") or [])
     warning_messages.extend(gate_result.get("warnings") or [])
     if dom_snapshot.fetch_warning:
@@ -293,6 +349,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             "dom_snapshot_manifest": dom_snapshot.manifest_path,
             "selector_trace": str(selector_trace_path),
             "ai_extraction": str(ai_extraction_path) if ai_image_parse_result else None,
+            "ai_selector_rerank": str(ai_selector_rerank_path),
             "tag_template": str(tag_template_path),
             "trigger_selector": str(trigger_selector_path),
             "report": str(report_path),
@@ -306,6 +363,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         render_engine=dom_snapshot.render_engine,
         selector_metrics=case_metrics,
         gate_result=gate_result,
+        ai_selector_rerank=selector_build_result.get("ai_selector_rerank") or {},
     )
     run_summary_path.write_text(json.dumps(run_summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -324,6 +382,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         "dom_snapshot_manifest": dom_snapshot.manifest_path,
         "selector_trace": str(selector_trace_path),
         "ai_extraction": str(ai_extraction_path) if ai_image_parse_result else None,
+        "ai_selector_rerank": str(ai_selector_rerank_path),
         "tag_template": str(tag_template_path),
         "trigger_selector": str(trigger_selector_path),
         "report": str(report_path),

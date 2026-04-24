@@ -44,8 +44,16 @@ def render_report(
     selector_summary = selector_build_result.get("selector_summary") or {}
     state_metadata = selector_build_result.get("state_metadata") or []
     html_artifacts = selector_build_result.get("html_artifacts") or {}
+    ai_selector_rerank = selector_build_result.get("ai_selector_rerank") or {}
     generated_rule_summary = gate_result.get("generated_rule_summary") or {}
     golden_comparison = gate_result.get("golden_comparison") or {}
+    card_interactions = [
+        interaction
+        for interaction in measurement_case.get("interacciones", [])
+        if "card" in str(interaction.get("tipo_evento") or "").lower()
+        or str(interaction.get("group_context") or "").lower() == "card_collection"
+    ]
+    clic_card_resolved = any(interaction.get("selector_candidato") for interaction in card_interactions)
 
     lines = [
         f"# Reporte {case_id}",
@@ -56,6 +64,8 @@ def render_report(
         f"- gate_passed: {gate_result.get('passed')}",
         f"- promoted_selectors: {selector_summary.get('promoted_selectors')}",
         f"- human_review_required: {selector_summary.get('human_review_required')}",
+        f"- ai_selector_rerank_attempted: {ai_selector_rerank.get('attempted')}",
+        f"- ai_selector_rerank_accepted: {ai_selector_rerank.get('accepted_count')}",
         "",
         "## Evidencia por imagen",
     ]
@@ -147,6 +157,12 @@ def render_report(
             if evidence.get("hint_file"):
                 lines.append(f"  - hint_file: {evidence.get('hint_file')}")
             lines.append(f"  - human_review_required: {evidence.get('human_review_required')}")
+            lines.append(f"  - ai_rerank_attempted: {evidence.get('ai_rerank_attempted')}")
+            lines.append(f"  - ai_rerank_selected: {evidence.get('ai_rerank_selected')}")
+            lines.append(f"  - ai_rerank_reason: {evidence.get('ai_rerank_reason')}")
+            lines.append(
+                f"  - ai_rerank_requires_human_review: {evidence.get('ai_rerank_requires_human_review')}"
+            )
             if evidence.get("rejection_reason"):
                 lines.append(f"  - rejection_reason: {evidence.get('rejection_reason')}")
             chosen = evidence.get("chosen") or {}
@@ -208,6 +224,10 @@ def render_report(
             f"- ambiguity_rate: {case_metrics.get('ambiguity_rate')}",
             f"- generated_rules: {generated_rule_summary.get('generated_rules')}",
             f"- generated_rule_coverage: {generated_rule_summary.get('generated_rule_coverage')}",
+            f"- ai_selector_rerank_interactions_evaluated: {len(ai_selector_rerank.get('interactions') or [])}",
+            f"- ai_selector_rerank_recommended: {ai_selector_rerank.get('selected_count')}",
+            f"- ai_selector_rerank_accepted_after_validation: {ai_selector_rerank.get('accepted_count')}",
+            f"- clic_card_resolved: {clic_card_resolved}",
             "",
             "## Gate final",
             f"- passed: {gate_result.get('passed')}",
@@ -280,6 +300,7 @@ def render_report(
             f"- validated_interactions: {selector_validation.get('validated_interactions')}",
             f"- promoted_after_validation: {selector_validation.get('promoted_after_validation')}",
             f"- manual_selector_hints: {selector_build_result.get('manual_selector_hints')}",
+            f"- ai_selector_rerank: {ai_selector_rerank}",
         ]
     )
     for warning in selector_validation.get("warnings") or []:
