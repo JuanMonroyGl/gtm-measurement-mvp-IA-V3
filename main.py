@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from core.application.inspect_case import inspect_case_input_structure
+from core.application.extract_ai_images import run_ai_image_extraction
 from core.application.run_case import run_case
 from core.cli.context import parse_case_context
 from core.cli.errors import UserFacingError
@@ -19,9 +20,14 @@ def main() -> None:
     repo_root = Path(args.repo_root).resolve()
 
     try:
-        if args.command in {"inspect", "run"}:
+        if args.command in {"inspect", "run", "ai-images"}:
             context = parse_case_context(repo_root=repo_root, case_path=Path(args.case_path))
-            result = inspect_case_input_structure(context=context) if args.command == "inspect" else run_case(context)
+            if args.command == "inspect":
+                result = inspect_case_input_structure(context=context)
+            elif args.command == "ai-images":
+                result = run_ai_image_extraction(context)
+            else:
+                result = run_case(context)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return
 

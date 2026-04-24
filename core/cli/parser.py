@@ -15,6 +15,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Ejecuta el pipeline completo para un caso.")
     run_parser.add_argument("--case-path", required=True, help="Ruta del caso. Ej: inputs/case_001")
 
+    ai_images_parser = subparsers.add_parser(
+        "ai-images",
+        help="Extrae texto/estructura desde imagenes con IA en outputs/<case_id>/IA/imagenes.",
+    )
+    ai_images_parser.add_argument("--case-path", required=True, help="Ruta del caso. Ej: inputs/case_001")
+
     parser.add_argument(
         "--repo-root",
         default=".",
