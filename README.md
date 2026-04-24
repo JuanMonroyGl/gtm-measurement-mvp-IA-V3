@@ -1,5 +1,80 @@
 # GTM Measurement MVP
 
+## Pruebas locales con IA de imagenes
+Este flujo es paralelo y experimental. No modifica `measurement_case.json`, `tag_template.js`, selectores, scraping ni el gate. Sirve para comprobar si OpenAI esta leyendo imagenes reales y cuantos tokens consume.
+
+Config local recomendada en `.env`:
+```bash
+OPENAI_API_KEY=...
+AI_ENABLED=true
+AI_PROVIDER=openai
+
+# Mantener el pipeline principal controlado.
+AI_ENABLE_IMAGE_PARSE=false
+AI_ENABLE_SELECTOR_RERANK=true
+AI_SELECTOR_RERANK_ONLY_ON_AMBIGUITY=true
+
+# Flujo paralelo de lectura visual.
+AI_MODEL_IMAGE=gpt-5-mini
+AI_IMAGE_DETAIL=high
+AI_MAX_OUTPUT_TOKENS_IMAGE=1200
+
+AI_MODEL_SELECTOR=gpt-5-mini
+AI_MAX_OUTPUT_TOKENS_SELECTOR=350
+AI_CACHE_DIR=.cache/ai
+```
+
+Reglas:
+- No subir `.env`.
+- No imprimir `OPENAI_API_KEY`.
+- El flujo `ai-images` no usa `image_evidence.json`, `native_text.json`, goldens, DOM ni HTML.
+- Si el caso viene como PDF/PPTX, primero se renderiza a imagenes y luego se copian las imagenes limpias a `outputs/<case_id>/IA/imagenes/input_images/`.
+- OpenAI lee solo esas imagenes de `IA/imagenes/input_images/`.
+
+Para probar desde cero cuando borras `outputs/`:
+```powershell
+Remove-Item -Recurse -Force outputs\case_demo -ErrorAction SilentlyContinue
+.venv\Scripts\python.exe main.py ai-images --case-path inputs/case_demo
+```
+
+Salidas esperadas:
+```text
+outputs/<case_id>/IA/imagenes/
+  input_images/
+    001.png
+    002.png
+  image_text_raw.json
+  image_text_structured.json
+  image_text_by_image.md
+  token_usage.json
+  extraction_report.md
+```
+
+Que revisar:
+- `input_images/`: prueba visual de que vio la IA.
+- `image_text_by_image.md`: texto extraido por imagen.
+- `image_text_structured.json`: interacciones detectadas y normalizadas.
+- `token_usage.json`: tokens por imagen y total.
+- `extraction_report.md`: resumen humano.
+
+Interpretacion rapida:
+- Si `image_source` termina en `IA/imagenes/input_images`, la IA leyo imagenes aisladas.
+- Si `token_usage.json` tiene `status=completed`, la llamada a OpenAI termino.
+- Si una interaccion tiene multiples `element_variants` o `title_variants`, el postproceso fuerza `interaction_mode=group`.
+
+Para correr luego el pipeline principal:
+```powershell
+.venv\Scripts\python.exe main.py run --case-path inputs/case_demo
+```
+
+Ese comando si genera:
+```text
+outputs/<case_id>/measurement_case.json
+outputs/<case_id>/tag_template.js
+outputs/<case_id>/trigger_selector.txt
+outputs/<case_id>/report.md
+```
+
 ## Uso recomendado (sin fricción)
 1. Crear `inputs/<case_id>/`.
 2. Poner **solo una fuente del plan** (archivo o carpeta de imágenes).
