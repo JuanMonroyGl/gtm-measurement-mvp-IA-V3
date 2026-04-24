@@ -1,0 +1,12 @@
+.header-main_cont .header-main_nav .header-menu_link,
+.header-main_cont .header-main_nav .header-menu_link *,
+.wcmbc-menu-swiper-container .swiper-wrapper .swiper-slide,
+.wcmbc-menu-swiper-container .swiper-wrapper .swiper-slide *,
+#recomendado_1 .card-footer-cwss2 .btn-outline-brand,
+#recomendado_1 .card-footer-cwss2 .btn-outline-brand *,
+#recomendado_2 .card-footer-cwss2 .btn-outline-brand,
+#recomendado_2 .card-footer-cwss2 .btn-outline-brand *,
+#recomendado_3 .card-footer-cwss2 .btn-outline-brand,
+#recomendado_3 .card-footer-cwss2 .btn-outline-brand *,
+.lista-preguntas ul a,
+.lista-preguntas ul a *
