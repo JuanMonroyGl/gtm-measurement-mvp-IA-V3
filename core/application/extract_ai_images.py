@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +85,20 @@ def _image_paths(context: CaseContext) -> tuple[list[Path], str]:
     if not paths:
         raise UserFacingError(f"No hay imagenes PNG/JPG/WEBP en {images_dir}")
     return paths, source
+
+
+def _copy_images_for_ai(*, images: list[Path], output_dir: Path) -> list[Path]:
+    input_images_dir = output_dir / "input_images"
+    if input_images_dir.exists():
+        shutil.rmtree(input_images_dir)
+    input_images_dir.mkdir(parents=True, exist_ok=True)
+
+    copied: list[Path] = []
+    for index, image in enumerate(images, start=1):
+        destination = input_images_dir / f"{index:03d}{image.suffix.lower()}"
+        shutil.copy2(image, destination)
+        copied.append(destination)
+    return copied
 
 
 def _ensure_image_paths(context: CaseContext) -> tuple[list[Path], str]:
@@ -331,6 +346,8 @@ def run_ai_image_extraction(context: CaseContext) -> dict[str, Any]:
     images, image_source = _ensure_image_paths(context)
     output_dir = context.repo_root / "outputs" / context.case_id / "IA" / "imagenes"
     output_dir.mkdir(parents=True, exist_ok=True)
+    images = _copy_images_for_ai(images=images, output_dir=output_dir)
+    image_source = f"{image_source}->IA/imagenes/input_images"
 
     results = [_extract_one_image(image_path=image_path, config=config) for image_path in images]
     aggregate_usage: dict[str, int] = {}
