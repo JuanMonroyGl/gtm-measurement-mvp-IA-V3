@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -58,7 +61,9 @@ OPTIONAL_STATE_DEFINITIONS = [
 
 @dataclass
 class DomSnapshot:
+    target_url: str
     source_url: str
+    final_url: str | None
     raw_html: str | None
     rendered_dom_html: str | None
     render_engine: str
@@ -68,6 +73,152 @@ class DomSnapshot:
     state_html: dict[str, str] | None = None
     clickable_inventory: list[dict[str, Any]] | None = None
     state_metadata: list[dict[str, Any]] | None = None
+    dom_dir: str | None = None
+    manifest_path: str | None = None
+    html_artifacts: dict[str, dict[str, Any]] | None = None
+
+
+def _captured_at() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _html_file_name(state: str, source: str) -> str:
+    if source == "raw_html":
+        return "raw_html.html"
+    return f"rendered_{state}.html"
+
+
+def _relative_dom_path(case_id: str, file_name: str) -> str:
+    return (Path("outputs") / case_id / "dom" / file_name).as_posix()
+
+
+def _metadata_by_state(state_metadata: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+    return {str(item.get("state")): item for item in state_metadata or [] if item.get("state")}
+
+
+def _manifest_warnings(snapshot: DomSnapshot, raw_fetch_warning: str | None = None) -> list[str]:
+    warnings = []
+    if snapshot.warning:
+        warnings.append(snapshot.warning)
+    if snapshot.fetch_warning:
+        warnings.append(snapshot.fetch_warning)
+    if raw_fetch_warning and raw_fetch_warning not in warnings:
+        warnings.append(raw_fetch_warning)
+    for state in snapshot.state_metadata or []:
+        if state.get("warning"):
+            warnings.append(str(state["warning"]))
+    return list(dict.fromkeys(warnings))
+
+
+def _persist_dom_artifacts(
+    *,
+    snapshot: DomSnapshot,
+    output_dir: Path | None,
+    case_id: str | None,
+    raw_fetch_warning: str | None = None,
+) -> DomSnapshot:
+    if output_dir is None or not case_id:
+        return snapshot
+
+    dom_dir = output_dir / "dom"
+    dom_dir.mkdir(parents=True, exist_ok=True)
+
+    artifacts: dict[str, dict[str, Any]] = {}
+    html_lengths: dict[str, int] = {}
+
+    if snapshot.raw_html is not None:
+        file_name = _html_file_name("raw_html", "raw_html")
+        path = dom_dir / file_name
+        path.write_text(snapshot.raw_html, encoding="utf-8")
+        html_lengths["raw_html"] = len(snapshot.raw_html)
+        artifacts["raw_html"] = {
+            "state": "raw_html",
+            "file": file_name,
+            "path": str(path),
+            "relative_path": _relative_dom_path(case_id, file_name),
+            "source": "raw_html",
+            "attempted": True,
+            "verified": True,
+            "warnings": [] if not raw_fetch_warning else [raw_fetch_warning],
+            "html_length": len(snapshot.raw_html),
+        }
+
+    metadata_by_state = _metadata_by_state(snapshot.state_metadata)
+    states: list[dict[str, Any]] = []
+    for state in snapshot.states_captured or []:
+        metadata = metadata_by_state.get(state, {})
+        source = str(metadata.get("source") or "observed_rendered_dom")
+        html = snapshot.raw_html if state == "raw_html_fallback" else (snapshot.state_html or {}).get(state)
+        if html is None:
+            continue
+
+        file_name = "raw_html.html" if state == "raw_html_fallback" else _html_file_name(state, source)
+        path = dom_dir / file_name
+        if state != "raw_html_fallback":
+            path.write_text(html, encoding="utf-8")
+
+        html_lengths[state] = len(html)
+        state_entry = {
+            "state": state,
+            "file": file_name,
+            "path": str(path),
+            "relative_path": _relative_dom_path(case_id, file_name),
+            "source": source,
+            "attempted": bool(metadata.get("attempted", True)),
+            "verified": bool(metadata.get("verified", state == "initial_render")),
+            "warnings": [metadata["warning"]] if metadata.get("warning") else [],
+            "html_length": len(html),
+        }
+        states.append(state_entry)
+        artifacts[state] = state_entry
+
+    notes: list[str] = []
+    captured = set(snapshot.states_captured or [])
+    for metadata in snapshot.state_metadata or []:
+        state = str(metadata.get("state") or "")
+        if not state or state in captured:
+            continue
+        if metadata.get("attempted"):
+            notes.append(f"Estado {state} intentado pero no verificado; no se guardo HTML renderizado.")
+        else:
+            notes.append(f"Estado {state} no aplico; no se guardo HTML renderizado.")
+    if not snapshot.raw_html:
+        notes.append("No se guardo raw_html.html porque no hubo HTML crudo disponible en el flujo.")
+
+    warnings = _manifest_warnings(snapshot, raw_fetch_warning=raw_fetch_warning)
+    if snapshot.render_engine == "raw_html_fallback":
+        manifest_source = "raw_html_fallback"
+    elif snapshot.render_engine == "none":
+        manifest_source = "none"
+    else:
+        manifest_source = "observed_rendered_dom"
+
+    manifest = {
+        "case_id": case_id,
+        "target_url": snapshot.target_url,
+        "final_url": snapshot.final_url,
+        "render_engine": snapshot.render_engine,
+        "states_captured": snapshot.states_captured or [],
+        "states": states,
+        "state_metadata": snapshot.state_metadata or [],
+        "raw_html": artifacts.get("raw_html"),
+        "html_artifacts": artifacts,
+        "source": manifest_source,
+        "attempted": bool(snapshot.target_url),
+        "verified": any(bool(item.get("verified")) for item in states),
+        "warnings": warnings,
+        "html_length": html_lengths,
+        "captured_at": _captured_at(),
+        "fallback_used": snapshot.render_engine == "raw_html_fallback",
+        "notes": notes,
+    }
+    manifest_path = dom_dir / "dom_snapshot_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    snapshot.dom_dir = str(dom_dir)
+    snapshot.manifest_path = str(manifest_path)
+    snapshot.html_artifacts = artifacts
+    return snapshot
 
 
 def _state_change_observed(
@@ -186,7 +337,7 @@ def _extract_clickables_with_playwright(page: Page, state: str, source: str) -> 
         const classes = Array.from(el.classList || []).filter((value) => value && value.length > 2).slice(0, 2);
         if (classes.length) candidates.push(`${{tag}}.${{classes.map((value) => CSS.escape(value)).join('.')}}`);
         candidates.push(tag);
-        return Array.from(new Set(candidates));
+        return Array.from(new Set(candidates)).sort();
       }}
       function contextText(el) {{
         const parts = [];
@@ -325,9 +476,11 @@ def _attempt_optional_state(page: Page, definition: dict[str, Any]) -> dict[str,
     return metadata
 
 
-def _capture_playwright_states(target_url: str) -> tuple[dict[str, str] | None, list[dict[str, Any]], list[dict[str, Any]], str | None]:
+def _capture_playwright_states(
+    target_url: str,
+) -> tuple[dict[str, str] | None, list[dict[str, Any]], list[dict[str, Any]], str | None, str | None]:
     if sync_playwright is None:
-        return None, [], [], "Playwright no disponible; el pipeline degradará a raw_html_fallback."
+        return None, [], [], None, "Playwright no disponible; el pipeline degradará a raw_html_fallback."
 
     try:
         with sync_playwright() as playwright:
@@ -337,6 +490,7 @@ def _capture_playwright_states(target_url: str) -> tuple[dict[str, str] | None, 
             state_metadata: list[dict[str, Any]] = []
 
             base_page = _prepare_page(browser, target_url)
+            final_url = base_page.url
             initial_html, initial_inventory = _capture_rendered_state(base_page, "initial_render")
             state_html["initial_render"] = initial_html
             inventory.extend(initial_inventory)
@@ -372,9 +526,9 @@ def _capture_playwright_states(target_url: str) -> tuple[dict[str, str] | None, 
                 page.close()
 
             browser.close()
-            return state_html, inventory, state_metadata, None
+            return state_html, inventory, state_metadata, final_url, None
     except Exception as exc:  # pragma: no cover
-        return None, [], [], f"Falló render con Playwright; el pipeline degradará a raw_html_fallback. Detalle: {exc}"
+        return None, [], [], None, f"Falló render con Playwright; el pipeline degradará a raw_html_fallback. Detalle: {exc}"
 
 
 def _extract_clickables_from_html(html: str, state: str, source: str) -> tuple[str, list[dict[str, Any]]]:
@@ -427,18 +581,25 @@ def _extract_clickables_from_html(html: str, state: str, source: str) -> tuple[s
                 "source": source,
                 "is_visible": False,
                 "is_clickable": True,
-                "selector_candidates": list(dict.fromkeys(selector_candidates)),
+                "selector_candidates": sorted(set(selector_candidates)),
             }
         )
 
     return str(soup), inventory
 
 
-def build_dom_snapshot(target_url: str) -> DomSnapshot:
+def build_dom_snapshot(
+    target_url: str,
+    output_dir: Path | str | None = None,
+    case_id: str | None = None,
+) -> DomSnapshot:
     """Return normalized snapshot, provenance, and verified state evidence."""
+    output_path = Path(output_dir) if output_dir is not None else None
     if not target_url:
-        return DomSnapshot(
+        snapshot = DomSnapshot(
+            target_url=target_url,
             source_url=target_url,
+            final_url=None,
             raw_html=None,
             rendered_dom_html=None,
             render_engine="none",
@@ -449,13 +610,18 @@ def build_dom_snapshot(target_url: str) -> DomSnapshot:
             clickable_inventory=[],
             state_metadata=[],
         )
+        return _persist_dom_artifacts(snapshot=snapshot, output_dir=output_path, case_id=case_id)
 
-    state_html, inventory, state_metadata, render_warning = _capture_playwright_states(target_url)
+    state_html, inventory, state_metadata, final_url, render_warning = _capture_playwright_states(target_url)
     if state_html:
+        raw_fetch_result = fetch_html(target_url)
+        raw_fetch_warning = raw_fetch_result.warning if not raw_fetch_result.html else None
         states_captured = [state for state in STATE_SEQUENCE if state in state_html]
-        return DomSnapshot(
-            source_url=target_url,
-            raw_html=None,
+        snapshot = DomSnapshot(
+            target_url=target_url,
+            source_url=final_url or raw_fetch_result.final_url or target_url,
+            final_url=final_url or raw_fetch_result.final_url,
+            raw_html=raw_fetch_result.html,
             rendered_dom_html=state_html.get("initial_render") or next(iter(state_html.values())),
             render_engine="playwright_multi_state",
             warning=render_warning,
@@ -464,6 +630,12 @@ def build_dom_snapshot(target_url: str) -> DomSnapshot:
             state_html=state_html,
             clickable_inventory=inventory,
             state_metadata=state_metadata,
+        )
+        return _persist_dom_artifacts(
+            snapshot=snapshot,
+            output_dir=output_path,
+            case_id=case_id,
+            raw_fetch_warning=raw_fetch_warning,
         )
 
     fetch_result = fetch_html(target_url)
@@ -487,8 +659,10 @@ def build_dom_snapshot(target_url: str) -> DomSnapshot:
                 "warning": "Solo se obtuvo HTML crudo; no hay confirmación de DOM renderizado.",
             }
         ]
-        return DomSnapshot(
+        snapshot = DomSnapshot(
+            target_url=target_url,
             source_url=fetch_result.final_url or target_url,
+            final_url=fetch_result.final_url,
             raw_html=fetch_result.html,
             rendered_dom_html=annotated_html,
             render_engine="raw_html_fallback",
@@ -499,9 +673,12 @@ def build_dom_snapshot(target_url: str) -> DomSnapshot:
             clickable_inventory=fallback_inventory,
             state_metadata=state_metadata,
         )
+        return _persist_dom_artifacts(snapshot=snapshot, output_dir=output_path, case_id=case_id)
 
-    return DomSnapshot(
+    snapshot = DomSnapshot(
+        target_url=target_url,
         source_url=target_url,
+        final_url=None,
         raw_html=None,
         rendered_dom_html=None,
         render_engine="none",
@@ -512,3 +689,4 @@ def build_dom_snapshot(target_url: str) -> DomSnapshot:
         clickable_inventory=[],
         state_metadata=state_metadata,
     )
+    return _persist_dom_artifacts(snapshot=snapshot, output_dir=output_path, case_id=case_id)

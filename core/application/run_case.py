@@ -124,7 +124,11 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         )
 
     target_url = measurement_case.get("target_url")
-    dom_snapshot = build_dom_snapshot(target_url=target_url or "")
+    dom_snapshot = build_dom_snapshot(
+        target_url=target_url or "",
+        output_dir=output_dir,
+        case_id=context.case_id,
+    )
     manual_selector_hints = load_manual_selector_hints(context.repo_root, context.case_id)
 
     selector_build_result = propose_selectors(
@@ -134,6 +138,8 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     )
     selector_build_result["render_engine"] = dom_snapshot.render_engine
     selector_build_result["states_captured"] = dom_snapshot.states_captured
+    selector_build_result["dom_snapshot_manifest"] = dom_snapshot.manifest_path
+    selector_build_result["html_artifacts"] = dom_snapshot.html_artifacts or {}
 
     selector_validation = validate_selector_candidates(
         measurement_case=measurement_case,
@@ -160,6 +166,12 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     )
 
     clickable_inventory_payload = {
+        "artifact_type": "derived_clickable_inventory",
+        "description": (
+            "Inventario derivado de HTML crudo/renderizado para capas posteriores; "
+            "no contiene ranking, seleccion final de CSS ni decision GTM."
+        ),
+        "dom_snapshot_manifest": dom_snapshot.manifest_path,
         "states_captured": dom_snapshot.states_captured,
         "render_engine": dom_snapshot.render_engine,
         "state_metadata": dom_snapshot.state_metadata or [],
@@ -272,6 +284,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             "asset_manifest": str((Path(prepared_images_dir).parent / "asset_manifest.json")),
             "measurement_case": str(measurement_case_path),
             "clickable_inventory": str(clickable_inventory_path),
+            "dom_snapshot_manifest": dom_snapshot.manifest_path,
             "selector_trace": str(selector_trace_path),
             "ai_extraction": str(ai_extraction_path) if ai_image_parse_result else None,
             "tag_template": str(tag_template_path),
@@ -302,6 +315,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         "output_dir": str(output_dir),
         "measurement_case": str(measurement_case_path),
         "clickable_inventory": str(clickable_inventory_path),
+        "dom_snapshot_manifest": dom_snapshot.manifest_path,
         "selector_trace": str(selector_trace_path),
         "ai_extraction": str(ai_extraction_path) if ai_image_parse_result else None,
         "tag_template": str(tag_template_path),

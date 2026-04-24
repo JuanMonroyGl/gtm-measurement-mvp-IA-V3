@@ -43,6 +43,7 @@ def render_report(
     selector_evidence = selector_build_result.get("selector_evidence") or []
     selector_summary = selector_build_result.get("selector_summary") or {}
     state_metadata = selector_build_result.get("state_metadata") or []
+    html_artifacts = selector_build_result.get("html_artifacts") or {}
     generated_rule_summary = gate_result.get("generated_rule_summary") or {}
     golden_comparison = gate_result.get("golden_comparison") or {}
 
@@ -79,10 +80,18 @@ def render_report(
         [
             "",
             "## DOM y estados",
+            f"- dom_snapshot_manifest: {selector_build_result.get('dom_snapshot_manifest')}",
             f"- clickable_inventory_items: {len((selector_build_result.get('clickable_inventory') or []))}",
+            "- clickable_inventory_scope: inventario derivado del HTML; no rankea ni selecciona CSS final",
             f"- states_captured: {', '.join(selector_build_result.get('states_captured') or []) or '<none>'}",
         ]
     )
+    for name, artifact in html_artifacts.items():
+        lines.append(f"- html_artifact: {name}")
+        lines.append(f"  - path: {artifact.get('path')}")
+        lines.append(f"  - relative_path: {artifact.get('relative_path')}")
+        lines.append(f"  - source: {artifact.get('source')}")
+        lines.append(f"  - html_length: {artifact.get('html_length')}")
     for state in state_metadata:
         lines.append(f"- state: {state.get('state')}")
         lines.append(f"  - source: {state.get('source')}")

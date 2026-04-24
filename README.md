@@ -69,6 +69,10 @@ También puede detectar un único PDF/PPTX con otro nombre razonable (no requier
 - Fallback: fetch de HTML crudo cuando Playwright no está disponible o falla.
 - El pipeline deja warnings claros cuando cae a fallback.
 - `raw_html_fallback` no se trata como `observed_rendered_dom`: no autopromueve selector final.
+- `web_scraping` persiste snapshots HTML completos y auditables en `outputs/<case_id>/dom/`.
+- Archivos esperados cuando aplican: `raw_html.html`, `rendered_initial_render.html`, `rendered_after_scroll.html`, `rendered_nav_open.html`, `rendered_tabs_expanded.html`, `rendered_accordion_open.html`, `rendered_carousel_ready.html`.
+- `outputs/<case_id>/dom/dom_snapshot_manifest.json` registra URL objetivo, URL final, motor de render, estados capturados, archivo HTML por estado, fuente, verificacion, warnings y longitud del HTML.
+- La seleccion, ranking y promocion de selectores CSS vive fuera de `web_scraping`, en `core/processing/selectors` y eventualmente `core/ai`.
 
 ## Salida estandarizada de intake
 ```text
@@ -109,6 +113,7 @@ Nuevas dependencias clave:
 - `raw_html_fallback` queda degradado: warning explícito, revisión humana obligatoria y sin autopromoción final.
 - Si no hay evidencia DOM suficiente, el selector queda en `null` y se marca revisión humana en trazas/reporte.
 - Se genera `outputs/<case_id>/clickable_inventory.json` con inventario de nodos accionables por estado.
+- `clickable_inventory.json` es inventario derivado del HTML guardado; no rankea candidatos, no es la seleccion final de CSS ni decide GTM.
 - Se genera `outputs/<case_id>/selector_trace.json` con evidencia de selección/rechazo por interacción.
 - `report.md` y `run_summary.json` incluyen estados verificados, origen del selector, métricas de rechazo y resultado del gate final.
 
