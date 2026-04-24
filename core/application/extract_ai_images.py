@@ -19,6 +19,7 @@ from core.ai.contracts import Interaction
 from core.ai.openai_client import get_openai_client
 from core.cli.context import CaseContext
 from core.cli.errors import UserFacingError
+from core.intake.prepare_case_assets import CaseAssetPreparationError, prepare_case_assets
 
 
 PROMPT_VERSION = "ai_image_text_extraction_parallel_v1"
@@ -83,6 +84,17 @@ def _image_paths(context: CaseContext) -> tuple[list[Path], str]:
     if not paths:
         raise UserFacingError(f"No hay imagenes PNG/JPG/WEBP en {images_dir}")
     return paths, source
+
+
+def _ensure_image_paths(context: CaseContext) -> tuple[list[Path], str]:
+    try:
+        return _image_paths(context)
+    except UserFacingError:
+        try:
+            prepare_case_assets(context=context)
+        except CaseAssetPreparationError as exc:
+            raise UserFacingError(f"No se pudieron preparar imagenes para IA: {exc}") from exc
+        return _image_paths(context)
 
 
 def _build_input(image_path: Path, config: AIConfig) -> list[dict[str, Any]]:
@@ -316,7 +328,7 @@ def run_ai_image_extraction(context: CaseContext) -> dict[str, Any]:
         raise UserFacingError("AI image extraction requiere AI_ENABLED=true y AI_PROVIDER=openai.")
 
     case_dir = context.case_dir
-    images, image_source = _image_paths(context)
+    images, image_source = _ensure_image_paths(context)
     output_dir = context.repo_root / "outputs" / context.case_id / "IA" / "imagenes"
     output_dir.mkdir(parents=True, exist_ok=True)
 
