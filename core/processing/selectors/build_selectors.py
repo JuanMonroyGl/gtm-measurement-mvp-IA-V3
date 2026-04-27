@@ -295,7 +295,13 @@ def _candidate_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> d
                 exact_phrase_match = True
                 break
 
-    alignment_score = len(matched_direct_tokens) * 35 + len(matched_context_tokens) * 10 + (30 if exact_phrase_match else 0)
+    alignment_score = (
+        len(matched_direct_tokens) * 35
+        + len(matched_context_tokens) * 10
+        + len(matched_primary_direct_tokens) * 80
+        + len(matched_primary_context_tokens) * 20
+        + (30 if exact_phrase_match else 0)
+    )
     has_minimum_alignment = bool(matched_direct_tokens or exact_phrase_match)
 
     return {
@@ -1281,6 +1287,8 @@ def _select_single_interaction(
     traces.sort(
         key=lambda trace: (
             int(bool(trace.get("can_promote"))),
+            int(bool(trace.get("matched_primary_direct_tokens"))),
+            int(bool(trace.get("matched_primary_context_tokens"))),
             int(trace.get("alignment_score", 0)),
             int(trace.get("specificity_score", 0)),
             int(bool(trace.get("click_grounded"))),
