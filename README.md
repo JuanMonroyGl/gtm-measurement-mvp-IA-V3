@@ -47,6 +47,7 @@ outputs/<case_id>/IA/imagenes/
   image_text_structured.json
   image_text_by_image.md
   token_usage.json
+  token_budget.txt
   extraction_report.md
 ```
 
@@ -55,6 +56,8 @@ Que revisar:
 - `image_text_by_image.md`: texto extraido por imagen.
 - `image_text_structured.json`: interacciones detectadas y normalizadas.
 - `token_usage.json`: tokens por imagen y total.
+- `token_budget.txt`: resumen plano para presupuesto del caso.
+- `outputs/ai_token_budget_tracker.txt`: acumulado local desde baseline `69052` tokens.
 - `extraction_report.md`: resumen humano.
 
 Interpretacion rapida:

@@ -25,6 +25,7 @@ from core.intake.prepare_case_assets import CaseAssetPreparationError, prepare_c
 
 PROMPT_VERSION = "ai_image_text_extraction_parallel_v1"
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+TOKEN_TRACKER_BASELINE = 69052
 
 
 class ImageExtraction(BaseModel):
@@ -337,6 +338,81 @@ def _render_markdown(case_id: str, results: list[dict[str, Any]], aggregate_usag
     return "\n".join(lines)
 
 
+def _render_token_budget_txt(
+    *,
+    case_id: str,
+    command: str,
+    images_processed: int,
+    image_source: str,
+    model: str,
+    image_detail: str,
+    aggregate_usage: dict[str, int],
+) -> str:
+    return "\n".join(
+        [
+            f"case_id={case_id}",
+            f"command={command}",
+            f"images_processed={images_processed}",
+            f"image_source={image_source}",
+            f"model={model}",
+            f"image_detail={image_detail}",
+            f"input_tokens={aggregate_usage.get('input_tokens', 0)}",
+            f"output_tokens={aggregate_usage.get('output_tokens', 0)}",
+            f"total_tokens={aggregate_usage.get('total_tokens', 0)}",
+            "",
+        ]
+    )
+
+
+def _update_token_budget_tracker(
+    *,
+    tracker_path: Path,
+    case_id: str,
+    command: str,
+    model: str,
+    images_processed: int,
+    aggregate_usage: dict[str, int],
+) -> None:
+    current_total = TOKEN_TRACKER_BASELINE
+    previous_lines: list[str] = []
+    if tracker_path.exists():
+        previous_lines = tracker_path.read_text(encoding="utf-8").splitlines()
+        for line in reversed(previous_lines):
+            if line.startswith("running_total_tokens="):
+                try:
+                    current_total = int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    current_total = TOKEN_TRACKER_BASELINE
+                break
+
+    total_tokens = int(aggregate_usage.get("total_tokens") or 0)
+    running_total = current_total + total_tokens
+    entry_lines = [
+        "",
+        "----",
+        f"case_id={case_id}",
+        f"command={command}",
+        f"model={model}",
+        f"images_processed={images_processed}",
+        f"input_tokens={aggregate_usage.get('input_tokens', 0)}",
+        f"output_tokens={aggregate_usage.get('output_tokens', 0)}",
+        f"total_tokens={total_tokens}",
+        f"previous_total_tokens={current_total}",
+        f"running_total_tokens={running_total}",
+    ]
+
+    if previous_lines:
+        content = "\n".join([*previous_lines, *entry_lines]).strip() + "\n"
+    else:
+        header = [
+            "AI token budget tracker",
+            f"baseline_tokens={TOKEN_TRACKER_BASELINE}",
+            "nota=Registro local en outputs/; no se versiona en Git.",
+        ]
+        content = "\n".join([*header, *entry_lines]).strip() + "\n"
+    tracker_path.write_text(content, encoding="utf-8")
+
+
 def run_ai_image_extraction(context: CaseContext) -> dict[str, Any]:
     config = AIConfig.from_env()
     if not config.enabled or config.provider != "openai":
@@ -416,11 +492,33 @@ def run_ai_image_extraction(context: CaseContext) -> dict[str, Any]:
     structured_path = output_dir / "image_text_structured.json"
     markdown_path = output_dir / "image_text_by_image.md"
     usage_path = output_dir / "token_usage.json"
+    budget_path = output_dir / "token_budget.txt"
     report_path = output_dir / "extraction_report.md"
+    tracker_path = context.repo_root / "outputs" / "ai_token_budget_tracker.txt"
 
     raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     structured_path.write_text(json.dumps(structured_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     usage_path.write_text(json.dumps(usage_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    budget_path.write_text(
+        _render_token_budget_txt(
+            case_id=context.case_id,
+            command="main.py ai-images",
+            images_processed=len(images),
+            image_source=image_source,
+            model=config.model_image,
+            image_detail=config.image_detail,
+            aggregate_usage=aggregate_usage,
+        ),
+        encoding="utf-8",
+    )
+    _update_token_budget_tracker(
+        tracker_path=tracker_path,
+        case_id=context.case_id,
+        command="main.py ai-images",
+        model=config.model_image,
+        images_processed=len(images),
+        aggregate_usage=aggregate_usage,
+    )
     markdown = _render_markdown(context.case_id, results, aggregate_usage)
     markdown_path.write_text(markdown, encoding="utf-8")
     report_path.write_text(markdown, encoding="utf-8")
@@ -438,6 +536,8 @@ def run_ai_image_extraction(context: CaseContext) -> dict[str, Any]:
             "image_text_structured": str(structured_path),
             "image_text_by_image": str(markdown_path),
             "token_usage": str(usage_path),
+            "token_budget": str(budget_path),
+            "token_budget_tracker": str(tracker_path),
             "extraction_report": str(report_path),
         },
     }
