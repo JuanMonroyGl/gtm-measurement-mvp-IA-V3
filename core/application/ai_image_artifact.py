@@ -29,6 +29,17 @@ def _as_list(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _interaction_mode_from_ai_item(item: dict[str, Any], element_variants: list[str], title_variants: list[str]) -> str:
+    mode = str(item.get("interaction_mode") or "").strip().lower()
+    event = str(item.get("tipo_evento") or "").strip().lower()
+    has_multiple = len(element_variants) > 1 or len(title_variants) > 1
+    if has_multiple:
+        return "group"
+    if event not in {"clic menu", "clic tab", "clic card"}:
+        return "single"
+    return mode or "single"
+
+
 def load_ai_image_structured_artifact(context: CaseContext) -> dict[str, Any]:
     path = ai_image_structured_path(context)
     if not path.exists():
@@ -94,6 +105,8 @@ def parsed_plan_from_ai_image_artifact(context: CaseContext, artifact: dict[str,
         warnings.append("Interaccion cargada desde outputs/<case_id>/IA/imagenes/image_text_structured.json.")
 
         source_image = str(item.get("source_image") or "")
+        element_variants = _as_list(item.get("element_variants"))
+        title_variants = _as_list(item.get("title_variants"))
         fields = {
             "tipo_evento": item.get("tipo_evento"),
             "activo": item.get("activo"),
@@ -103,9 +116,9 @@ def parsed_plan_from_ai_image_artifact(context: CaseContext, artifact: dict[str,
             "titulo_card": item.get("titulo_card"),
             "ubicacion": item.get("ubicacion"),
             "texto_referencia": item.get("texto_referencia"),
-            "interaction_mode": item.get("interaction_mode"),
-            "element_variants": _as_list(item.get("element_variants")),
-            "title_variants": _as_list(item.get("title_variants")),
+            "interaction_mode": _interaction_mode_from_ai_item(item, element_variants, title_variants),
+            "element_variants": element_variants,
+            "title_variants": title_variants,
             "group_context": item.get("group_context"),
             "zone_hint": item.get("zone_hint"),
             "value_extraction_strategy": item.get("value_extraction_strategy"),

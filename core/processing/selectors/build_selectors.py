@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -46,6 +47,9 @@ def _normalize(text: str | None) -> str:
     if not text:
         return ""
     cleaned = text.lower().strip()
+    cleaned = "".join(
+        char for char in unicodedata.normalize("NFKD", cleaned) if not unicodedata.combining(char)
+    )
     cleaned = re.sub(r"\s+", " ", cleaned)
     replacements = {
         "á": "a",
@@ -1491,8 +1495,7 @@ def propose_selectors(
 
         ai_rerank_record: dict[str, Any] | None = None
         can_attempt_ai = (
-            interaction_mode == "group"
-            and selector_rerank_provider is not None
+            selector_rerank_provider is not None
             and selector_rerank_provider.__class__.__name__ != "NoopSelectorRerankProvider"
             and bool(traces)
             and (not chosen or not chosen.get("can_promote"))

@@ -206,14 +206,18 @@ def _postprocess_interaction(interaction: dict[str, Any]) -> dict[str, Any]:
     item["element_variants"] = element_variants
     item["title_variants"] = title_variants
 
+    event_type = _normalize_text(item.get("tipo_evento"))
     has_group_variants = len(element_variants) > 1 or len(title_variants) > 1
     if has_group_variants and item.get("interaction_mode") != "group":
         item["interaction_mode"] = "group"
         warnings.append("interaction_mode corregido a group por multiples variantes.")
+    elif not has_group_variants and event_type not in {"clic menu", "clic tab", "clic card"}:
+        if item.get("interaction_mode") == "group":
+            warnings.append("interaction_mode corregido a single porque solo hay una accion.")
+        item["interaction_mode"] = "single"
     elif not item.get("interaction_mode"):
         item["interaction_mode"] = "group" if has_group_variants else "single"
 
-    event_type = _normalize_text(item.get("tipo_evento"))
     location = _normalize_text(item.get("ubicacion"))
     context_text = _normalize_text(
         " ".join(
