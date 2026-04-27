@@ -1,7 +1,7 @@
 # GTM Measurement MVP
 
 ## Pruebas locales con IA de imagenes
-Este flujo es paralelo y experimental. No modifica `measurement_case.json`, `tag_template.js`, selectores, scraping ni el gate. Sirve para comprobar si OpenAI esta leyendo imagenes reales y cuantos tokens consume.
+Este flujo primero genera un diagnostico paralelo de lectura visual. Si luego corres `main.py run` y existe `outputs/<case_id>/IA/imagenes/image_text_structured.json`, el pipeline principal puede usar ese artefacto local como plan estructurado de entrada. `run` no vuelve a llamar OpenAI para leer imagenes; solo reutiliza el JSON ya generado. Si `AI_ENABLE_SELECTOR_RERANK=true`, la capa de selectores si puede llamar OpenAI para elegir entre candidatos CSS existentes.
 
 Config local recomendada en `.env`:
 ```bash
@@ -62,7 +62,7 @@ Interpretacion rapida:
 - Si `token_usage.json` tiene `status=completed`, la llamada a OpenAI termino.
 - Si una interaccion tiene multiples `element_variants` o `title_variants`, el postproceso fuerza `interaction_mode=group`.
 
-Para correr luego el pipeline principal:
+Para correr luego el pipeline principal usando ese artefacto local:
 ```powershell
 .venv\Scripts\python.exe main.py run --case-path inputs/case_demo
 ```
@@ -70,10 +70,18 @@ Para correr luego el pipeline principal:
 Ese comando si genera:
 ```text
 outputs/<case_id>/measurement_case.json
+outputs/<case_id>/ai_selector_rerank.json
 outputs/<case_id>/tag_template.js
 outputs/<case_id>/trigger_selector.txt
 outputs/<case_id>/report.md
+outputs/<case_id>/run_summary.json
 ```
+
+En `report.md` revisa:
+- `ai_image_structured_used`: confirma si `run` uso `image_text_structured.json`.
+- `ai_selector_rerank_attempted`: confirma si entro la IA de selectores.
+- `ai_selector_rerank_accepted`: confirma cuantas recomendaciones pasaron validacion.
+- `generated_rule_coverage`: sigue siendo calculado por el gate estricto.
 
 ## Uso recomendado (sin fricción)
 1. Crear `inputs/<case_id>/`.

@@ -41,6 +41,7 @@ def build_run_summary(
             "ai_available": (inspect_result.get("ai_status") or {}).get("ai_available"),
             "ocr_available": inspect_result.get("ocr_available"),
             "fallback_available": inspect_result.get("fallback_available"),
+            "ai_image_structured_artifact": inspect_result.get("ai_image_structured_artifact") or {},
         },
         "interactions_detected": interactions_detected,
         "ambiguity_detected": ambiguity_detected,

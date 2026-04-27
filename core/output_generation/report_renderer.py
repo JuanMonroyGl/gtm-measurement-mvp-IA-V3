@@ -45,6 +45,7 @@ def render_report(
     state_metadata = selector_build_result.get("state_metadata") or []
     html_artifacts = selector_build_result.get("html_artifacts") or {}
     ai_selector_rerank = selector_build_result.get("ai_selector_rerank") or {}
+    ai_image_artifact = parsed_plan.get("ai_image_structured_artifact") or {}
     generated_rule_summary = gate_result.get("generated_rule_summary") or {}
     golden_comparison = gate_result.get("golden_comparison") or {}
     card_interactions = [
@@ -60,6 +61,9 @@ def render_report(
         "",
         "## Estado",
         f"- OCR disponible: {(parsed_plan.get('ocr_status') or {}).get('ocr_available')}",
+        f"- ai_image_structured_available: {ai_image_artifact.get('available')}",
+        f"- ai_image_structured_used: {ai_image_artifact.get('used')}",
+        f"- ai_image_structured_path: {ai_image_artifact.get('path')}",
         f"- render_engine: {selector_build_result.get('render_engine')}",
         f"- gate_passed: {gate_result.get('passed')}",
         f"- promoted_selectors: {selector_summary.get('promoted_selectors')}",
