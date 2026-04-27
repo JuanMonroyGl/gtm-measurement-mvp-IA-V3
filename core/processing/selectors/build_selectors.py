@@ -117,6 +117,15 @@ def _interaction_tokens(interaction: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(tokens))
 
 
+def _primary_interaction_tokens(interaction: dict[str, Any]) -> list[str]:
+    tokens: list[str] = []
+    for field in ("texto_referencia", "elemento"):
+        tokens.extend(_tokenize(interaction.get(field)))
+    for value in _normalized_list(interaction.get("element_variants")):
+        tokens.extend(_tokenize(value))
+    return list(dict.fromkeys(tokens))
+
+
 def _selector_type(selector: str) -> str:
     if selector.startswith("#"):
         return "id"
@@ -242,6 +251,7 @@ def _runtime_flags(
 
 def _candidate_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     tokens = _interaction_tokens(interaction)
+    primary_tokens = _primary_interaction_tokens(interaction)
     direct_haystack = _normalize(
         " ".join(
             [
@@ -272,6 +282,10 @@ def _candidate_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> d
     )
     matched_direct_tokens = [token for token in tokens if token in direct_haystack]
     matched_context_tokens = [token for token in tokens if token not in matched_direct_tokens and token in context_haystack]
+    matched_primary_direct_tokens = [token for token in primary_tokens if token in direct_haystack]
+    matched_primary_context_tokens = [
+        token for token in primary_tokens if token not in matched_primary_direct_tokens and token in context_haystack
+    ]
 
     exact_phrase_match = False
     for field in ("texto_referencia", "elemento"):
@@ -289,6 +303,8 @@ def _candidate_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> d
         "matched_tokens": list(dict.fromkeys([*matched_direct_tokens, *matched_context_tokens])),
         "matched_direct_tokens": matched_direct_tokens,
         "matched_context_tokens": matched_context_tokens,
+        "matched_primary_direct_tokens": matched_primary_direct_tokens,
+        "matched_primary_context_tokens": matched_primary_context_tokens,
         "exact_phrase_match": exact_phrase_match,
         "alignment_score": alignment_score,
         "has_minimum_alignment": has_minimum_alignment,
@@ -341,6 +357,9 @@ def _candidate_evidence(
         promotion_blockers.append("selector genérico de tag no se autopromueve")
     if not alignment["has_minimum_alignment"]:
         promotion_blockers.append("sin evidencia mínima de alineación interacción-nodo")
+    if str(interaction.get("interaction_mode") or "single").lower() == "single":
+        if not (alignment["matched_primary_direct_tokens"] or alignment["exact_phrase_match"]):
+            promotion_blockers.append("selector single sin match directo contra elemento/texto_referencia")
     if not runtime_flags["matches_candidate_node"]:
         promotion_blockers.append("selector no apunta al nodo candidato observado")
     if not runtime_flags["closest_runtime_supported"]:
@@ -374,6 +393,8 @@ def _candidate_evidence(
         "matched_tokens": alignment["matched_tokens"],
         "matched_direct_tokens": alignment["matched_direct_tokens"],
         "matched_context_tokens": alignment["matched_context_tokens"],
+        "matched_primary_direct_tokens": alignment["matched_primary_direct_tokens"],
+        "matched_primary_context_tokens": alignment["matched_primary_context_tokens"],
         "has_minimum_alignment": alignment["has_minimum_alignment"],
         "alignment_score": alignment["alignment_score"],
         "specificity_score": SELECTOR_TYPE_WEIGHTS.get(selector_type, 0),
@@ -938,6 +959,148 @@ def _group_item_selector_candidates(
     return unique
 
 
+def _single_selector_candidates(item: dict[str, Any]) -> list[str]:
+    selectors = [str(selector).strip() for selector in (item.get("selector_candidates") or []) if str(selector).strip()]
+    id_selector = next((selector for selector in selectors if selector.startswith("#")), None)
+    stable_classes = _stable_classes(item.get("class_list") or [])
+    if id_selector and stable_classes:
+        selectors.insert(0, f"{id_selector}.{stable_classes[0]}")
+        if len(stable_classes) > 1:
+            selectors.insert(0, f"{id_selector}.{stable_classes[0]}.{stable_classes[1]}")
+    return list(dict.fromkeys(selectors))
+
+
+def _best_observed_selector_for_item(item: dict[str, Any], soups: dict[str, BeautifulSoup]) -> str | None:
+    for selector in _single_selector_candidates(item):
+        if _selector_type(selector) == "tag":
+            continue
+        match_count, _state = _selector_match_count(selector, soups)
+        if match_count >= 1:
+            return selector
+    return None
+
+
+def _best_items_by_variant(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_variant: dict[str, dict[str, Any]] = {}
+    for item in items:
+        alignment = item.get("__group_alignment__") or {}
+        for variant in alignment.get("matched_variants") or []:
+            current = by_variant.get(variant)
+            if current is None:
+                by_variant[variant] = item
+                continue
+            current_alignment = current.get("__group_alignment__") or {}
+            current_score = int(current_alignment.get("score") or 0) + (20 if current.get("is_visible") else 0)
+            next_score = int(alignment.get("score") or 0) + (20 if item.get("is_visible") else 0)
+            if next_score > current_score:
+                by_variant[variant] = item
+    return _dedupe_items_by_node_id(list(by_variant.values()))
+
+
+def _composite_group_candidate_evidence(
+    *,
+    interaction: dict[str, Any],
+    matched_items: list[dict[str, Any]],
+    soups: dict[str, BeautifulSoup],
+    dom_snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    unique_items = _best_items_by_variant(_dedupe_items_by_node_id(matched_items))
+    selector_parts: list[str] = []
+    selected_items: list[dict[str, Any]] = []
+    for item in unique_items:
+        selector = _best_observed_selector_for_item(item, soups)
+        if not selector:
+            continue
+        selector_parts.append(selector)
+        selected_items.append(item)
+
+    selector_parts = list(dict.fromkeys(selector_parts))
+    if len(selector_parts) < 2:
+        return None
+
+    item_selector = ", ".join(selector_parts)
+    origin = _group_origin(selected_items, dom_snapshot)
+    item_match_count, item_state = _selector_match_count(item_selector, soups)
+    matched_variants = list(
+        dict.fromkeys(
+            variant
+            for item in selected_items
+            for variant in (item.get("__group_alignment__") or {}).get("matched_variants", [])
+        )
+    )
+    expected_variants = _expected_group_variants(interaction)
+    minimum_variant_coverage = _minimum_group_variant_coverage(interaction)
+    item_match_limit = group_match_limit(len(expected_variants), len(selected_items))
+    promotion_blockers: list[str] = []
+    promotion_blockers.extend(selector_safety_blockers(item_selector, role="item"))
+    if origin != SELECTOR_ORIGIN_RENDERED:
+        promotion_blockers.append("grupo compuesto no proviene de DOM renderizado verificado")
+    if item_match_count == 0:
+        promotion_blockers.append("selector compuesto no existe en DOM observado")
+    if item_match_count > item_match_limit:
+        promotion_blockers.append(f"match_count global excesivo para grupo compuesto ({item_match_count})")
+    if item_match_count < 2:
+        promotion_blockers.append("selector compuesto cubre menos de 2 items")
+    if len(matched_variants) < minimum_variant_coverage:
+        promotion_blockers.append(
+            f"variant_coverage insuficiente ({len(matched_variants)} < {minimum_variant_coverage})"
+        )
+    if not useful_visible_text([item.get("text") for item in selected_items]):
+        promotion_blockers.append("visible_text vacio o sin senales utiles")
+
+    card_mapping: list[dict[str, str]] = []
+    if _normalize(interaction.get("group_context")) == "card_collection":
+        for index, item in enumerate(selected_items):
+            alignment = item.get("__group_alignment__") or {}
+            mapping: dict[str, str] = {
+                "card_id": str(item.get("id") or item.get("node_id") or f"card_{index + 1}"),
+                "selector": selector_parts[index],
+            }
+            matched_elements = alignment.get("matched_element_direct") or alignment.get("matched_element_context") or []
+            matched_titles = alignment.get("matched_title_direct") or alignment.get("matched_title_context") or []
+            if matched_elements:
+                mapping["elemento"] = str(matched_elements[0])
+            if matched_titles:
+                mapping["tituloCard"] = str(matched_titles[0])
+            card_mapping.append(mapping)
+
+    return {
+        "selector": item_selector,
+        "selector_type": "compound",
+        "selector_source": "automatic",
+        "selector_origin": origin,
+        "state": item_state,
+        "match_count": item_match_count,
+        "container_match_count": 0,
+        "selector_contenedor": None,
+        "selector_item": item_selector,
+        "group_item_count": len(selected_items),
+        "candidate_group_item_count": len(unique_items),
+        "matched_variants": matched_variants,
+        "variant_coverage": len(matched_variants),
+        "minimum_variant_coverage": minimum_variant_coverage,
+        "group_match_limit": item_match_limit,
+        "outside_match_count": max(0, item_match_count - len(selected_items)),
+        "visible_text": [item.get("text") for item in selected_items[:8]],
+        "context_text": [item.get("context_text") for item in selected_items[:4]],
+        "attributes": {
+            "node_ids": [item.get("node_id") for item in selected_items[:20]],
+        },
+        "alignment_score": len(matched_variants) * 50,
+        "specificity_score": 90,
+        "score": len(matched_variants) * 80 + len(selected_items) * 20,
+        "exists_in_dom": item_match_count >= 1,
+        "matches_candidate_node": len(selected_items) >= 2,
+        "closest_runtime_supported": len(selected_items) >= 2,
+        "click_grounded": len(selected_items) >= 2 and origin == SELECTOR_ORIGIN_RENDERED,
+        "promotion_blockers": promotion_blockers,
+        "can_promote": not promotion_blockers,
+        "card_mapping": card_mapping,
+        "outer_html_excerpt": [item.get("outer_html_excerpt") for item in selected_items[:3]],
+        "uniqueness_explanation": f"selector compuesto con {item_match_count} matches",
+    }
+
+
 def _group_origin(items: list[dict[str, Any]], dom_snapshot: dict[str, Any]) -> str:
     origins = {_candidate_origin(item, dom_snapshot) for item in items}
     if origins == {SELECTOR_ORIGIN_RENDERED}:
@@ -1099,7 +1262,7 @@ def _select_single_interaction(
     traces: list[dict[str, Any]] = []
     for item in inventory:
         seen: set[str] = set()
-        for selector in item.get("selector_candidates") or []:
+        for selector in _single_selector_candidates(item):
             selector_text = str(selector)
             if selector_text in seen:
                 continue
@@ -1169,6 +1332,14 @@ def _select_group_interaction(
                         dom_snapshot=dom_snapshot,
                     )
                 )
+        composite = _composite_group_candidate_evidence(
+            interaction=interaction,
+            matched_items=unique_items,
+            soups=soups,
+            dom_snapshot=dom_snapshot,
+        )
+        if composite is not None:
+            traces.append(composite)
 
     traces.extend(
         _manual_hint_group_traces(
