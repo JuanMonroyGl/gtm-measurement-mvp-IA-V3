@@ -94,6 +94,7 @@ def _safe_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "source",
         "origin",
         "card_mapping",
+        "card_mapping_complete",
         "matched_variants",
         "group_item_count",
         "candidate_group_item_count",
@@ -181,7 +182,8 @@ class OpenAISelectorRerankProvider(SelectorRerankProvider):
                     "Eres un reranker de selectores CSS para un pipeline GTM. "
                     "Solo puedes elegir selectores que existan literalmente en allowed_selectors o en candidates_considered. "
                     "No inventes selectores, no compongas selectores nuevos y no selecciones raw_html_fallback. "
-                    "Si hay safety_blockers, selector generico, match_count irrazonable o falta evidencia, exige revision humana."
+                    "Si hay safety_blockers, selector generico, match_count irrazonable o falta evidencia, exige revision humana. "
+                    "Para Clic Card/card_collection solo recomiendas si card_mapping_complete=true y el selector existe en DOM."
                 ),
             },
             {

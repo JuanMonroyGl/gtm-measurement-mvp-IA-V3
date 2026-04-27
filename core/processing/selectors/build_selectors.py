@@ -1198,13 +1198,14 @@ def _safe_ai_text(value: Any, limit: int = 700) -> Any:
     return value
 
 
-def _ai_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+def _ai_candidate_payload(candidate: dict[str, Any], interaction: dict[str, Any]) -> dict[str, Any]:
     safety_blockers: list[str] = []
     selector = candidate.get("selector_item") or candidate.get("selector")
     container_selector = candidate.get("selector_contenedor")
     safety_blockers.extend(selector_safety_blockers(selector, role="item"))
     if container_selector:
         safety_blockers.extend(selector_safety_blockers(container_selector, role="contenedor"))
+    card_mapping = list(candidate.get("card_mapping") or [])
     return {
         "selector": candidate.get("selector"),
         "selector_source": candidate.get("selector_source"),
@@ -1220,7 +1221,8 @@ def _ai_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
         "promotion_blockers": _safe_ai_text(candidate.get("promotion_blockers") or []),
         "source": candidate.get("selector_source"),
         "origin": candidate.get("selector_origin"),
-        "card_mapping": _safe_ai_text(candidate.get("card_mapping") or []),
+        "card_mapping": _safe_ai_text(card_mapping),
+        "card_mapping_complete": _card_mapping_complete_for_ai(interaction, card_mapping),
         "matched_variants": _safe_ai_text(candidate.get("matched_variants") or []),
         "group_item_count": candidate.get("group_item_count"),
         "candidate_group_item_count": candidate.get("candidate_group_item_count"),
@@ -1237,7 +1239,7 @@ def _build_ai_rerank_payload(
     interaction: dict[str, Any],
     traces: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    considered = [_ai_candidate_payload(trace) for trace in traces[:25]]
+    considered = [_ai_candidate_payload(trace, interaction) for trace in traces[:25]]
     allowed_selectors = []
     for trace in traces:
         for key in ("selector", "selector_item", "selector_contenedor"):
@@ -1293,6 +1295,25 @@ def _ai_allowed_to_override_blocker(blocker: str, *, has_card_mapping: bool) -> 
     return "variant_coverage insuficiente" in normalized or "card_collection sin titulo" in normalized
 
 
+def _card_mapping_complete_for_ai(interaction: dict[str, Any], card_mapping: list[dict[str, Any]]) -> bool:
+    element_variants = set(_normalized_list(interaction.get("element_variants")))
+    title_variants = set(_normalized_list(interaction.get("title_variants")))
+    expected_count = max(len(element_variants), len(title_variants), 2)
+
+    if len(card_mapping) < expected_count:
+        return False
+    if not all(mapping.get("card_id") and mapping.get("selector") for mapping in card_mapping):
+        return False
+
+    mapped_elements = {str(mapping.get("elemento")) for mapping in card_mapping if mapping.get("elemento")}
+    mapped_titles = {str(mapping.get("tituloCard")) for mapping in card_mapping if mapping.get("tituloCard")}
+    if element_variants and not element_variants.issubset(mapped_elements):
+        return False
+    if title_variants and not title_variants.issubset(mapped_titles):
+        return False
+    return True
+
+
 def _validate_ai_candidate(
     *,
     interaction: dict[str, Any],
@@ -1343,14 +1364,15 @@ def _validate_ai_candidate(
             return None, ["AI selector_rerank rechazado: visible_text vacio o sin senales utiles."]
 
     card_mapping = list(candidate.get("card_mapping") or [])
-    if group_context == "card_collection" and not card_mapping:
-        return None, ["AI selector_rerank rechazado: card_collection sin card_mapping derivado de evidencia."]
+    card_mapping_complete = _card_mapping_complete_for_ai(interaction, card_mapping)
+    if group_context == "card_collection" and not card_mapping_complete:
+        return None, ["AI selector_rerank rechazado: card_collection sin card_mapping completo derivado de evidencia."]
 
     promotion_blockers = [str(item) for item in (candidate.get("promotion_blockers") or [])]
     remaining_blockers = [
         blocker
         for blocker in promotion_blockers
-        if not _ai_allowed_to_override_blocker(blocker, has_card_mapping=bool(card_mapping))
+        if not _ai_allowed_to_override_blocker(blocker, has_card_mapping=card_mapping_complete)
     ]
     if remaining_blockers:
         return None, ["AI selector_rerank rechazado por blockers no resolubles: " + "; ".join(remaining_blockers)]
