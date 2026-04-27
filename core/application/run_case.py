@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.application.ai_image_artifact import load_ai_image_structured_artifact, parsed_plan_from_ai_image_artifact
 from core.application.inspect_case import inspect_case_input_structure
 from core.application.resolve_case_input import resolve_case_input
 from core.ai.config import AIConfig
@@ -60,13 +61,24 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         raise UserFacingError("No existe prepared_assets/images para continuar el pipeline.")
 
     native_text_entries = intake.get("native_text_entries") or []
+    ai_image_artifact = load_ai_image_structured_artifact(context)
+    ai_parsed_plan = parsed_plan_from_ai_image_artifact(context, ai_image_artifact)
+
     resolved_case = resolve_case_input(
         context,
         images_dir=Path(prepared_images_dir),
         native_text_entries=native_text_entries,
+        parsed_plan_override=ai_parsed_plan,
     )
     metadata = resolved_case["resolved_metadata"]
     parsed_plan = resolved_case["parsed_plan"]
+    if ai_image_artifact.get("path"):
+        parsed_plan.setdefault("ai_image_structured_artifact", {
+            "available": bool(ai_image_artifact.get("available")),
+            "used": bool(ai_parsed_plan),
+            "path": ai_image_artifact.get("path"),
+            "warnings": ai_image_artifact.get("warnings") or [],
+        })
     output_dir = ensure_output_dir(context.repo_root, context.case_id)
     ai_config = AIConfig.from_env()
     ai_image_parse_result: dict[str, Any] | None = None

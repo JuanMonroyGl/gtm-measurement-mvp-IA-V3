@@ -146,13 +146,14 @@ def resolve_case_input(
     *,
     images_dir: Path | None = None,
     native_text_entries: list[dict[str, Any]] | None = None,
+    parsed_plan_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve case metadata combining optional metadata.json with plan inference."""
     case_dir = context.case_dir
     metadata_path = case_dir / "metadata.json"
     resolved_images_dir = images_dir or (case_dir / "images")
 
-    parsed_plan = parse_measurement_plan(resolved_images_dir)
+    parsed_plan = parsed_plan_override or parse_measurement_plan(resolved_images_dir)
 
     messages: list[str] = []
     warnings: list[str] = []

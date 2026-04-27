@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.application.ai_image_artifact import load_ai_image_structured_artifact, parsed_plan_from_ai_image_artifact
 from core.application.resolve_case_input import load_metadata_checked, resolve_case_input
 from core.cli.context import CaseContext
 from core.cli.errors import UserFacingError
@@ -18,6 +19,8 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
     metadata_path = case_dir / "metadata.json"
     sidecar_path = case_dir / "image_evidence.json"
     ocr_status = get_ocr_runtime_status()
+    ai_image_artifact = load_ai_image_structured_artifact(context)
+    ai_parsed_plan = parsed_plan_from_ai_image_artifact(context, ai_image_artifact)
 
     warnings: list[str] = []
     missing: list[str] = []
@@ -74,6 +77,7 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
                 context,
                 images_dir=Path(prepared_images_dir),
                 native_text_entries=native_text_entries,
+                parsed_plan_override=ai_parsed_plan,
             )
             target_url = resolved["resolved_metadata"].get("target_url")
             inferred_metadata = resolved.get("inferred_metadata")
@@ -111,7 +115,12 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
         "ocr_available": bool(ocr_status.get("ocr_available")),
         "ocr_diagnostic": ocr_status,
         "ai_status": ai_status,
-        "fallback_available": sidecar_path.exists(),
+        "fallback_available": sidecar_path.exists() or bool(ai_image_artifact.get("available")),
+        "ai_image_structured_artifact": {
+            "available": bool(ai_image_artifact.get("available")),
+            "path": ai_image_artifact.get("path"),
+            "warnings": ai_image_artifact.get("warnings") or [],
+        },
         "image_count": len(prepared_images),
         "intake": {
             "detected_input_type": prepared_manifest.get("input_type"),
