@@ -141,7 +141,7 @@ class SelectorHardeningTests(unittest.TestCase):
         self.assertIsNone(measurement_case["interacciones"][0]["selector_candidato"])
         self.assertIn("sin evidencia mínima de alineación", build["selector_evidence"][0]["rejection_reason"])
 
-    def test_specific_selector_is_emitted_before_generic_selector(self) -> None:
+    def test_specific_selector_is_emitted_and_generic_selector_skipped(self) -> None:
         measurement_case = {
             "activo": "bancolombia",
             "seccion": "personas",
@@ -164,7 +164,8 @@ class SelectorHardeningTests(unittest.TestCase):
         }
 
         tag = build_tag_template(measurement_case)
-        self.assertLess(tag.index("e.closest('#pay-btn')"), tag.index("e.closest('button')"))
+        self.assertIn('e.closest("#pay-btn")', tag)
+        self.assertNotIn('e.closest("button")', tag)
 
     def test_strict_check_fails_for_stub_trigger_and_no_rules(self) -> None:
         temp_root = Path.cwd() / "tests_artifacts_case_output"

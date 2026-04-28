@@ -41,6 +41,11 @@ STATEFUL_CLASS_TOKENS = (
     "next",
     "prev",
 )
+LOW_VALUE_CLASS_TOKENS = {
+    "btn",
+    "button",
+    "link",
+}
 
 
 def _normalize(text: str | None) -> str:
@@ -239,7 +244,7 @@ def _runtime_flags(
         exists_in_dom
         and matches_candidate_node
         and closest_runtime_supported
-        and item.get("is_clickable")
+        and _is_usable_click_item(item)
     )
     return {
         "exists_in_dom": exists_in_dom,
@@ -324,6 +329,21 @@ def _candidate_origin(item: dict[str, Any], dom_snapshot: dict[str, Any]) -> str
     if source == SELECTOR_ORIGIN_RENDERED or dom_snapshot.get("render_engine") == "playwright_multi_state":
         return SELECTOR_ORIGIN_RENDERED
     return SELECTOR_ORIGIN_REJECTED
+
+
+def _is_usable_click_item(item: dict[str, Any]) -> bool:
+    if item.get("is_clickable"):
+        return True
+    tag = str(item.get("tag") or "").strip().lower()
+    if tag != "a":
+        return False
+    if item.get("href"):
+        return True
+    if item.get("id") or item.get("aria_label") or item.get("title"):
+        return True
+    if _stable_classes(item.get("class_list") or []):
+        return True
+    return bool(useful_visible_text(item.get("text")))
 
 
 def _candidate_evidence(
@@ -447,6 +467,18 @@ def _stable_classes(classes: list[str] | None) -> list[str]:
     return stable
 
 
+def _prioritized_stable_classes(classes: list[str] | None) -> list[str]:
+    stable = _stable_classes(classes)
+    return sorted(
+        stable,
+        key=lambda value: (
+            value.lower() in LOW_VALUE_CLASS_TOKENS,
+            -len(value),
+            value.lower(),
+        ),
+    )
+
+
 def _item_direct_haystack(item: dict[str, Any]) -> str:
     return _normalize(
         " ".join(
@@ -562,6 +594,31 @@ def _group_item_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> 
     }
 
 
+def _menu_like_context(item: dict[str, Any]) -> bool:
+    haystack = _normalize(
+        " ".join(
+            [
+                _item_context_haystack(item),
+                str(item.get("id") or ""),
+                " ".join(item.get("class_list") or []),
+            ]
+        )
+    )
+    return any(
+        token in haystack
+        for token in (
+            "menu",
+            "nav",
+            "navbar",
+            "header",
+            "submenu",
+            "filtro",
+            "categoria",
+            "tab",
+        )
+    )
+
+
 def _item_role(item: dict[str, Any]) -> str:
     outer_html = str(item.get("outer_html_excerpt") or "")
     match = re.search(r"\brole=[\"']([^\"']+)[\"']", outer_html, flags=re.IGNORECASE)
@@ -586,7 +643,7 @@ def _allowed_group_click_target(interaction: dict[str, Any], item: dict[str, Any
 def _alignment_allowed_for_group_context(interaction: dict[str, Any], item: dict[str, Any], alignment: dict[str, Any]) -> bool:
     group_context = _normalize(interaction.get("group_context"))
     if group_context in {"top_navigation", "menu", "shortcut_collection"}:
-        return bool(alignment.get("matched_element_direct"))
+        return bool(alignment.get("matched_element_direct")) and _menu_like_context(item)
     if group_context == "faq_collection":
         return bool(alignment.get("matched_element_direct")) and "/preguntas-frecuentes" in str(item.get("href") or "")
     if group_context == "card_collection":
@@ -965,15 +1022,80 @@ def _group_item_selector_candidates(
     return unique
 
 
+def _item_group_family_selectors(item: dict[str, Any]) -> list[str]:
+    tag = str(item.get("tag") or "").strip().lower()
+    if not tag:
+        return []
+
+    selectors: list[str] = []
+    for selector in item.get("selector_candidates") or []:
+        selector_text = str(selector or "").strip()
+        if not selector_text or selector_text.startswith("#") or is_unsafe_group_selector(selector_text):
+            continue
+        selectors.append(selector_text)
+
+    for class_name in _stable_classes(item.get("class_list") or []):
+        selector_text = f"{tag}.{class_name}"
+        if not is_unsafe_group_selector(selector_text):
+            selectors.append(selector_text)
+
+    return list(dict.fromkeys(selectors))
+
+
+def _family_group_candidate_traces(
+    *,
+    interaction: dict[str, Any],
+    unique_items: list[dict[str, Any]],
+    soups: dict[str, BeautifulSoup],
+    dom_snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
+    items_by_selector: dict[str, list[dict[str, Any]]] = {}
+    for item in unique_items:
+        for selector in _item_group_family_selectors(item):
+            items_by_selector.setdefault(selector, []).append(item)
+
+    traces: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for family_selector, family_items in items_by_selector.items():
+        family_items = _dedupe_items_by_node_id(family_items)
+        if len(family_items) < 2:
+            continue
+        for ancestor in _common_ancestor_selectors(family_items):
+            container_selector = ancestor["selector"]
+            if is_unsafe_group_selector(container_selector):
+                continue
+            item_selector = f"{container_selector} {family_selector}"
+            key = (container_selector, item_selector)
+            if key in seen:
+                continue
+            seen.add(key)
+            traces.append(
+                _group_candidate_evidence(
+                    interaction=interaction,
+                    matched_items=family_items,
+                    container_selector=container_selector,
+                    item_selector=item_selector,
+                    soups=soups,
+                    dom_snapshot=dom_snapshot,
+                )
+            )
+    return traces
+
+
 def _single_selector_candidates(item: dict[str, Any]) -> list[str]:
     selectors = [str(selector).strip() for selector in (item.get("selector_candidates") or []) if str(selector).strip()]
     id_selector = next((selector for selector in selectors if selector.startswith("#")), None)
-    stable_classes = _stable_classes(item.get("class_list") or [])
+    stable_classes = _prioritized_stable_classes(item.get("class_list") or [])
+    derived_selectors: list[str] = []
     if id_selector and stable_classes:
-        selectors.insert(0, f"{id_selector}.{stable_classes[0]}")
+        derived_selectors.append(f"{id_selector}.{stable_classes[0]}")
         if len(stable_classes) > 1:
-            selectors.insert(0, f"{id_selector}.{stable_classes[0]}.{stable_classes[1]}")
-    return list(dict.fromkeys(selectors))
+            derived_selectors.append(f"{id_selector}.{stable_classes[1]}")
+            derived_selectors.append(f"{id_selector}.{stable_classes[0]}.{stable_classes[1]}")
+    selectors = list(dict.fromkeys([*derived_selectors, *selectors]))
+    if derived_selectors:
+        item["selector_candidates"] = selectors
+    return selectors
 
 
 def _best_observed_selector_for_item(item: dict[str, Any], soups: dict[str, BeautifulSoup]) -> str | None:
@@ -1011,16 +1133,23 @@ def _composite_group_candidate_evidence(
     dom_snapshot: dict[str, Any],
 ) -> dict[str, Any] | None:
     unique_items = _best_items_by_variant(_dedupe_items_by_node_id(matched_items))
-    selector_parts: list[str] = []
-    selected_items: list[dict[str, Any]] = []
+    selector_item_pairs: list[tuple[str, dict[str, Any]]] = []
     for item in unique_items:
         selector = _best_observed_selector_for_item(item, soups)
         if not selector:
             continue
-        selector_parts.append(selector)
-        selected_items.append(item)
+        selector_item_pairs.append((selector, item))
 
-    selector_parts = list(dict.fromkeys(selector_parts))
+    deduped_pairs: list[tuple[str, dict[str, Any]]] = []
+    seen_selectors: set[str] = set()
+    for selector, item in selector_item_pairs:
+        if selector in seen_selectors:
+            continue
+        seen_selectors.add(selector)
+        deduped_pairs.append((selector, item))
+
+    selector_parts = [selector for selector, _item in deduped_pairs]
+    selected_items = [item for _selector, item in deduped_pairs]
     if len(selector_parts) < 2:
         return None
 
@@ -1056,11 +1185,11 @@ def _composite_group_candidate_evidence(
 
     card_mapping: list[dict[str, str]] = []
     if _normalize(interaction.get("group_context")) == "card_collection":
-        for index, item in enumerate(selected_items):
+        for index, (selector_part, item) in enumerate(zip(selector_parts, selected_items)):
             alignment = item.get("__group_alignment__") or {}
             mapping: dict[str, str] = {
                 "card_id": str(item.get("id") or item.get("node_id") or f"card_{index + 1}"),
-                "selector": selector_parts[index],
+                "selector": selector_part,
             }
             matched_elements = alignment.get("matched_element_direct") or alignment.get("matched_element_context") or []
             matched_titles = alignment.get("matched_title_direct") or alignment.get("matched_title_context") or []
@@ -1170,6 +1299,7 @@ def _group_candidate_evidence(
     minimum_variant_coverage = _minimum_group_variant_coverage(interaction)
     item_match_limit = group_match_limit(len(expected_variants), len(unique_items))
     group_context = _normalize(interaction.get("group_context"))
+    tipo_evento = _normalize(interaction.get("tipo_evento"))
     promotion_blockers: list[str] = []
     promotion_blockers.extend(selector_safety_blockers(item_selector, role="item"))
     promotion_blockers.extend(selector_safety_blockers(container_selector, role="contenedor"))
@@ -1203,7 +1333,9 @@ def _group_candidate_evidence(
     if group_context == "faq_collection" and "href" not in item_selector.lower():
         promotion_blockers.append("faq_collection requiere selector_item con href discriminante")
     title_variants = set(_normalized_list(interaction.get("title_variants")))
-    if group_context == "card_collection" and title_variants and not (set(matched_variants) & title_variants):
+    if group_context == "card_collection" and "card" in tipo_evento and title_variants and not (
+        set(matched_variants) & title_variants
+    ):
         promotion_blockers.append("card_collection sin título de card resuelto con confianza")
 
     can_promote = not promotion_blockers
@@ -1324,6 +1456,14 @@ def _select_group_interaction(
     traces: list[dict[str, Any]] = []
 
     if len(unique_items) >= 2:
+        traces.extend(
+            _family_group_candidate_traces(
+                interaction=interaction,
+                unique_items=unique_items,
+                soups=soups,
+                dom_snapshot=dom_snapshot,
+            )
+        )
         ancestor_candidates = _common_ancestor_selectors(unique_items)
         for ancestor in ancestor_candidates:
             container_selector = ancestor["selector"]
@@ -1508,6 +1648,7 @@ def _validate_ai_candidate(
     container_selector = candidate.get("selector_contenedor")
     interaction_mode = str(interaction.get("interaction_mode") or "single").lower()
     group_context = _normalize(interaction.get("group_context"))
+    tipo_evento = _normalize(interaction.get("tipo_evento"))
 
     if ai_result.get("requires_human_review"):
         return None, ["AI selector_rerank no recomendo autopromocion; mantiene human_review_required=true."]
@@ -1548,7 +1689,7 @@ def _validate_ai_candidate(
 
     card_mapping = list(candidate.get("card_mapping") or [])
     card_mapping_complete = _card_mapping_complete_for_ai(interaction, card_mapping)
-    if group_context == "card_collection" and not card_mapping_complete:
+    if group_context == "card_collection" and "card" in tipo_evento and not card_mapping_complete:
         return None, ["AI selector_rerank rechazado: card_collection sin card_mapping completo derivado de evidencia."]
 
     promotion_blockers = [str(item) for item in (candidate.get("promotion_blockers") or [])]
@@ -1610,7 +1751,7 @@ def propose_selectors(
 ) -> dict[str, Any]:
     state_html = dom_snapshot.get("state_html") or {}
     soups = {state: BeautifulSoup(html, "lxml") for state, html in state_html.items()}
-    inventory = [item for item in (dom_snapshot.get("clickable_inventory") or []) if item.get("is_clickable")]
+    inventory = [item for item in (dom_snapshot.get("clickable_inventory") or []) if _is_usable_click_item(item)]
     render_engine = str(dom_snapshot.get("render_engine") or "none")
     ai_rerank_artifact = _empty_ai_rerank_artifact(selector_rerank_provider)
 
