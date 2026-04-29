@@ -92,6 +92,7 @@ temp/
 .env
 .env.*
 *.env
+!.env.example
 *.secret
 *.secrets
 secrets/

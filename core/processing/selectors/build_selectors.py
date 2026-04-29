@@ -46,6 +46,20 @@ LOW_VALUE_CLASS_TOKENS = {
     "button",
     "link",
 }
+INTERACTIVE_LABEL_CLASS_TOKENS = (
+    "tituloacordeon",
+    "titulo-acordeon",
+    "acordeon-header",
+    "acordeon-title",
+    "accordion-header",
+    "accordion-title",
+    "accordion-button",
+    "bc-accordion-header",
+    "filter__option",
+    "filter__option-desktop",
+    "tab-title",
+    "tab-label",
+)
 
 
 def _normalize(text: str | None) -> str:
@@ -103,6 +117,49 @@ def _tokenize(value: str | None) -> list[str]:
         "al",
     }
     return [token for token in re.split(r"[^a-z0-9]+", normalized) if len(token) >= 3 and token not in stopwords]
+
+
+def _text_match_form(value: str | None) -> str:
+    normalized = _normalize(value)
+    return re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+
+
+def _token_match_key(token: str) -> str:
+    if len(token) > 4 and token.endswith("s"):
+        return token[:-1]
+    return token
+
+
+def _long_variant_token_match(variant: str, haystack: str) -> bool:
+    variant_tokens = _tokenize(variant)
+    if len(variant_tokens) < 6:
+        return False
+    haystack_tokens = {_token_match_key(token) for token in _tokenize(haystack)}
+    if not haystack_tokens:
+        return False
+    matched = sum(1 for token in variant_tokens if _token_match_key(token) in haystack_tokens)
+    minimum = max(5, (len(variant_tokens) * 4 + 4) // 5)
+    return matched >= minimum
+
+
+def _short_variant_token_match(variant: str, haystack: str) -> bool:
+    variant_tokens = [_token_match_key(token) for token in _tokenize(variant)]
+    if len(variant_tokens) < 2 or len(variant_tokens) > 5:
+        return False
+    haystack_tokens = {_token_match_key(token) for token in _tokenize(haystack)}
+    if not haystack_tokens:
+        return False
+    return all(token in haystack_tokens for token in variant_tokens)
+
+
+def _variant_matches_haystack(variant: str, haystack: str) -> bool:
+    normalized_variant = _text_match_form(variant)
+    normalized_haystack = _text_match_form(haystack)
+    if not normalized_variant or not normalized_haystack:
+        return False
+    if f" {normalized_variant} " in f" {normalized_haystack} ":
+        return True
+    return _short_variant_token_match(variant, haystack) or _long_variant_token_match(variant, haystack)
 
 
 def _normalized_list(value: Any) -> list[str]:
@@ -257,6 +314,7 @@ def _runtime_flags(
 def _candidate_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     tokens = _interaction_tokens(interaction)
     primary_tokens = _primary_interaction_tokens(interaction)
+    location_tokens = _tokenize(interaction.get("ubicacion"))
     direct_haystack = _normalize(
         " ".join(
             [
@@ -291,21 +349,60 @@ def _candidate_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> d
     matched_primary_context_tokens = [
         token for token in primary_tokens if token not in matched_primary_direct_tokens and token in context_haystack
     ]
+    matched_location_direct_tokens = [token for token in location_tokens if token in direct_haystack]
+    matched_location_context_tokens = [
+        token for token in location_tokens if token not in matched_location_direct_tokens and token in context_haystack
+    ]
+    matched_element_direct_variants, matched_element_context_variants = _variant_matches(
+        _normalized_list(interaction.get("element_variants")),
+        direct_haystack,
+        context_haystack,
+    )
 
-    exact_phrase_match = False
+    expected_phrase_forms = [
+        form
+        for form in (
+            *(_text_match_form(interaction.get(field)) for field in ("texto_referencia", "elemento")),
+            *(_text_match_form(value) for value in _normalized_list(interaction.get("element_variants"))),
+        )
+        if len(form) >= 4
+    ]
+    direct_label_forms = [
+        form
+        for form in (
+            _text_match_form(item.get("text")),
+            _text_match_form(item.get("aria_label")),
+            _text_match_form(item.get("title")),
+        )
+        if form
+    ]
+    direct_label_exact_match = any(label == expected for label in direct_label_forms for expected in expected_phrase_forms)
+
+    exact_direct_phrase_match = False
+    exact_context_phrase_match = False
     for field in ("texto_referencia", "elemento"):
         normalized = _normalize(interaction.get(field))
         if normalized and len(normalized) >= 4:
-            if normalized in direct_haystack or normalized in context_haystack:
-                exact_phrase_match = True
+            if normalized in direct_haystack:
+                exact_direct_phrase_match = True
                 break
+            if normalized in context_haystack:
+                exact_context_phrase_match = True
+                break
+    exact_phrase_match = exact_direct_phrase_match or exact_context_phrase_match
 
     alignment_score = (
         len(matched_direct_tokens) * 35
         + len(matched_context_tokens) * 10
         + len(matched_primary_direct_tokens) * 80
         + len(matched_primary_context_tokens) * 20
-        + (30 if exact_phrase_match else 0)
+        + len(matched_element_direct_variants) * 120
+        + len(matched_element_context_variants) * 30
+        + len(matched_location_direct_tokens) * 70
+        + len(matched_location_context_tokens) * 25
+        + (90 if direct_label_exact_match else 0)
+        + (45 if exact_direct_phrase_match else 0)
+        + (10 if exact_context_phrase_match else 0)
     )
     has_minimum_alignment = bool(matched_direct_tokens or exact_phrase_match)
 
@@ -316,7 +413,14 @@ def _candidate_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> d
         "matched_context_tokens": matched_context_tokens,
         "matched_primary_direct_tokens": matched_primary_direct_tokens,
         "matched_primary_context_tokens": matched_primary_context_tokens,
+        "matched_location_direct_tokens": matched_location_direct_tokens,
+        "matched_location_context_tokens": matched_location_context_tokens,
+        "matched_element_direct_variants": matched_element_direct_variants,
+        "matched_element_context_variants": matched_element_context_variants,
+        "direct_label_exact_match": direct_label_exact_match,
         "exact_phrase_match": exact_phrase_match,
+        "exact_direct_phrase_match": exact_direct_phrase_match,
+        "exact_context_phrase_match": exact_context_phrase_match,
         "alignment_score": alignment_score,
         "has_minimum_alignment": has_minimum_alignment,
     }
@@ -335,6 +439,10 @@ def _is_usable_click_item(item: dict[str, Any]) -> bool:
     if item.get("is_clickable"):
         return True
     tag = str(item.get("tag") or "").strip().lower()
+    if tag in {"button", "summary"}:
+        return True
+    if _interactive_label_context(item) and useful_visible_text(item.get("text")):
+        return True
     if tag != "a":
         return False
     if item.get("href"):
@@ -421,6 +529,14 @@ def _candidate_evidence(
         "matched_context_tokens": alignment["matched_context_tokens"],
         "matched_primary_direct_tokens": alignment["matched_primary_direct_tokens"],
         "matched_primary_context_tokens": alignment["matched_primary_context_tokens"],
+        "matched_location_direct_tokens": alignment["matched_location_direct_tokens"],
+        "matched_location_context_tokens": alignment["matched_location_context_tokens"],
+        "matched_element_direct_variants": alignment["matched_element_direct_variants"],
+        "matched_element_context_variants": alignment["matched_element_context_variants"],
+        "direct_label_exact_match": alignment["direct_label_exact_match"],
+        "exact_phrase_match": alignment["exact_phrase_match"],
+        "exact_direct_phrase_match": alignment["exact_direct_phrase_match"],
+        "exact_context_phrase_match": alignment["exact_context_phrase_match"],
         "has_minimum_alignment": alignment["has_minimum_alignment"],
         "alignment_score": alignment["alignment_score"],
         "specificity_score": SELECTOR_TYPE_WEIGHTS.get(selector_type, 0),
@@ -517,12 +633,11 @@ def _variant_matches(variants: list[str], direct_haystack: str, context_haystack
     direct_matches: list[str] = []
     context_matches: list[str] = []
     for variant in variants:
-        normalized = _normalize(variant)
-        if not normalized:
+        if not _text_match_form(variant):
             continue
-        if normalized in direct_haystack:
+        if _variant_matches_haystack(variant, direct_haystack):
             direct_matches.append(variant)
-        elif normalized in context_haystack:
+        elif _variant_matches_haystack(variant, context_haystack):
             context_matches.append(variant)
     return direct_matches, context_matches
 
@@ -541,6 +656,8 @@ def _zone_alignment_score(interaction: dict[str, Any], item: dict[str, Any]) -> 
         score += 4
     if zone_hint == "card-grid" and any(token in haystack for token in ("card-footer", "btn-products", "swiper", " card ")):
         score += 4
+    if zone_hint == "generic-tabs" and any(token in haystack for token in ("acordeon", "accordion", "tab")):
+        score += 4
 
     if group_context == "card_collection" and any(token in haystack for token in ("card", "swiper", "btn-products")):
         score += 2
@@ -549,6 +666,8 @@ def _zone_alignment_score(interaction: dict[str, Any], item: dict[str, Any]) -> 
     if group_context == "top_navigation" and "header-menu" in haystack:
         score += 2
     if group_context == "shortcut_collection" and "submenu" in haystack:
+        score += 2
+    if group_context == "generic_tab_collection" and any(token in haystack for token in ("acordeon", "accordion", "tab")):
         score += 2
 
     for token in _tokenize(interaction.get("ubicacion")):
@@ -561,15 +680,33 @@ def _zone_alignment_score(interaction: dict[str, Any], item: dict[str, Any]) -> 
 def _group_item_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     direct_haystack = _item_direct_haystack(item)
     context_haystack = _item_context_haystack(item)
+    group_context = _normalize(interaction.get("group_context"))
     element_variants = _normalized_list(interaction.get("element_variants"))
     title_variants = _normalized_list(interaction.get("title_variants"))
     matched_element_direct, matched_element_context = _variant_matches(element_variants, direct_haystack, context_haystack)
     matched_title_direct, matched_title_context = _variant_matches(title_variants, direct_haystack, context_haystack)
     zone_score = _zone_alignment_score(interaction, item)
 
+    if group_context in {"top_navigation", "menu", "faq_collection"}:
+        variant_sources = [*matched_element_direct, *matched_title_direct]
+    elif group_context == "shortcut_collection":
+        direct_sources = [*matched_element_direct, *matched_title_direct]
+        context_sources = [*matched_element_context, *matched_title_context] if _shortcut_like_context(item) else []
+        variant_sources = direct_sources or context_sources
+    elif group_context == "card_collection":
+        variant_sources = [
+            *matched_element_direct,
+            *matched_element_context,
+            *matched_title_direct,
+            *matched_title_context,
+        ]
+    else:
+        direct_sources = [*matched_element_direct, *matched_title_direct]
+        context_sources = [*matched_element_context, *matched_title_context]
+        variant_sources = direct_sources or context_sources
     matched_variants = list(
         dict.fromkeys(
-            [*matched_element_direct, *matched_element_context, *matched_title_direct, *matched_title_context]
+            variant_sources
         )
     )
     score = (
@@ -619,6 +756,47 @@ def _menu_like_context(item: dict[str, Any]) -> bool:
     )
 
 
+def _shortcut_like_context(item: dict[str, Any]) -> bool:
+    haystack = _normalize(
+        " ".join(
+            [
+                _item_context_haystack(item),
+                str(item.get("id") or ""),
+                " ".join(item.get("class_list") or []),
+            ]
+        )
+    )
+    return any(
+        token in haystack
+        for token in (
+            "accordion",
+            "acordeon",
+            "submenu",
+            "tab",
+            "tabs",
+            "producto",
+            "productos",
+            "filter",
+            "stages",
+            "stage",
+            "swiper",
+        )
+    )
+
+
+def _interactive_label_context(item: dict[str, Any]) -> bool:
+    haystack = _normalize(
+        " ".join(
+            [
+                str(item.get("id") or ""),
+                " ".join(item.get("class_list") or []),
+                _item_context_haystack(item),
+            ]
+        )
+    )
+    return any(token in haystack for token in INTERACTIVE_LABEL_CLASS_TOKENS)
+
+
 def _item_role(item: dict[str, Any]) -> str:
     outer_html = str(item.get("outer_html_excerpt") or "")
     match = re.search(r"\brole=[\"']([^\"']+)[\"']", outer_html, flags=re.IGNORECASE)
@@ -630,20 +808,29 @@ def _allowed_group_click_target(interaction: dict[str, Any], item: dict[str, Any
     role = _item_role(item)
     group_context = _normalize(interaction.get("group_context"))
     if group_context in {"top_navigation", "menu"}:
-        return tag in {"a", "button"}
+        return tag in {"a", "button"} or _interactive_label_context(item)
     if group_context == "shortcut_collection":
-        return tag in {"a", "button"} or role == "tab"
+        return tag in {"a", "button"} or role == "tab" or _interactive_label_context(item)
     if group_context == "faq_collection":
         return tag == "a"
     if group_context == "card_collection":
         return tag in {"a", "button"}
-    return tag in {"a", "button"} or role in {"button", "tab"}
+    return tag in {"a", "button"} or role in {"button", "tab"} or _interactive_label_context(item)
 
 
 def _alignment_allowed_for_group_context(interaction: dict[str, Any], item: dict[str, Any], alignment: dict[str, Any]) -> bool:
     group_context = _normalize(interaction.get("group_context"))
     if group_context in {"top_navigation", "menu", "shortcut_collection"}:
-        return bool(alignment.get("matched_element_direct")) and _menu_like_context(item)
+        if group_context == "shortcut_collection":
+            return bool(
+                alignment.get("matched_element_direct")
+                or alignment.get("matched_title_direct")
+                or alignment.get("matched_element_context")
+                or alignment.get("matched_title_context")
+            ) and _shortcut_like_context(item)
+        return bool(alignment.get("matched_element_direct")) and (
+            _menu_like_context(item) or _shortcut_like_context(item)
+        )
     if group_context == "faq_collection":
         return bool(alignment.get("matched_element_direct")) and "/preguntas-frecuentes" in str(item.get("href") or "")
     if group_context == "card_collection":
@@ -694,9 +881,9 @@ def _href_group_selector(interaction: dict[str, Any], items: list[dict[str, Any]
 
 
 def _matched_variants_from_text(interaction: dict[str, Any], *texts: str) -> list[str]:
-    haystack = _normalize(" ".join(text for text in texts if text))
+    haystack = " ".join(text for text in texts if text)
     variants = _expected_group_variants(interaction)
-    return [variant for variant in variants if _normalize(variant) and _normalize(variant) in haystack]
+    return [variant for variant in variants if _variant_matches_haystack(variant, haystack)]
 
 
 def _hint_container_selector(selector: str, interaction: dict[str, Any]) -> str | None:
@@ -971,6 +1158,14 @@ def _common_ancestor_selectors(items: list[dict[str, Any]]) -> list[dict[str, An
                 "specificity_score": specificity_score,
             }
         )
+    results.sort(
+        key=lambda item: (
+            int(item.get("specificity_score") or 0),
+            -int(item.get("depth") or 0),
+            len(str(item.get("selector") or "")),
+        ),
+        reverse=True,
+    )
     return results
 
 
@@ -1082,7 +1277,28 @@ def _family_group_candidate_traces(
     return traces
 
 
-def _single_selector_candidates(item: dict[str, Any]) -> list[str]:
+def _ancestor_scoped_single_selectors(item: dict[str, Any], selectors: list[str]) -> list[str]:
+    scoped: list[str] = []
+    seen: set[str] = set()
+    base_selectors = [
+        selector
+        for selector in selectors[:4]
+        if _selector_type(selector) != "tag" and not selector.startswith("#") and "," not in selector
+    ]
+    for ancestor in _ancestor_selector_candidates(item)[:4]:
+        ancestor_selector = str(ancestor.get("selector") or "").strip()
+        if not ancestor_selector or is_unsafe_group_selector(ancestor_selector):
+            continue
+        for selector in base_selectors:
+            selector_text = f"{ancestor_selector} {selector}"
+            if selector_text in seen:
+                continue
+            seen.add(selector_text)
+            scoped.append(selector_text)
+    return scoped
+
+
+def _single_selector_candidates(item: dict[str, Any], *, include_ancestor_scopes: bool = True) -> list[str]:
     selectors = [str(selector).strip() for selector in (item.get("selector_candidates") or []) if str(selector).strip()]
     id_selector = next((selector for selector in selectors if selector.startswith("#")), None)
     stable_classes = _prioritized_stable_classes(item.get("class_list") or [])
@@ -1092,6 +1308,8 @@ def _single_selector_candidates(item: dict[str, Any]) -> list[str]:
         if len(stable_classes) > 1:
             derived_selectors.append(f"{id_selector}.{stable_classes[1]}")
             derived_selectors.append(f"{id_selector}.{stable_classes[0]}.{stable_classes[1]}")
+    if include_ancestor_scopes:
+        derived_selectors.extend(_ancestor_scoped_single_selectors(item, selectors))
     selectors = list(dict.fromkeys([*derived_selectors, *selectors]))
     if derived_selectors:
         item["selector_candidates"] = selectors
@@ -1099,7 +1317,7 @@ def _single_selector_candidates(item: dict[str, Any]) -> list[str]:
 
 
 def _best_observed_selector_for_item(item: dict[str, Any], soups: dict[str, BeautifulSoup]) -> str | None:
-    for selector in _single_selector_candidates(item):
+    for selector in _single_selector_candidates(item, include_ancestor_scopes=False):
         if _selector_type(selector) == "tag":
             continue
         match_count, _state = _selector_match_count(selector, soups)
@@ -1140,22 +1358,30 @@ def _composite_group_candidate_evidence(
             continue
         selector_item_pairs.append((selector, item))
 
-    deduped_pairs: list[tuple[str, dict[str, Any]]] = []
     seen_selectors: set[str] = set()
+    selector_parts: list[str] = []
     for selector, item in selector_item_pairs:
         if selector in seen_selectors:
             continue
         seen_selectors.add(selector)
-        deduped_pairs.append((selector, item))
+        selector_parts.append(selector)
 
-    selector_parts = [selector for selector, _item in deduped_pairs]
-    selected_items = [item for _selector, item in deduped_pairs]
     if len(selector_parts) < 2:
         return None
 
+    selected_items = [item for selector, item in selector_item_pairs if selector in seen_selectors]
     item_selector = ", ".join(selector_parts)
     origin = _group_origin(selected_items, dom_snapshot)
     item_match_count, item_state = _selector_match_count(item_selector, soups)
+    container_selector = next(
+        (
+            ancestor["selector"]
+            for ancestor in _common_ancestor_selectors(selected_items)
+            if not is_unsafe_group_selector(ancestor["selector"])
+        ),
+        None,
+    )
+    container_match_count, _container_state = _selector_match_count(container_selector, soups) if container_selector else (0, None)
     matched_variants = list(
         dict.fromkeys(
             variant
@@ -1168,6 +1394,10 @@ def _composite_group_candidate_evidence(
     item_match_limit = group_match_limit(len(expected_variants), len(selected_items))
     promotion_blockers: list[str] = []
     promotion_blockers.extend(selector_safety_blockers(item_selector, role="item"))
+    if not container_selector:
+        promotion_blockers.append("selector compuesto sin contenedor estable derivable")
+    elif container_match_count > container_match_limit():
+        promotion_blockers.append(f"container_match_count excesivo para grupo compuesto ({container_match_count})")
     if origin != SELECTOR_ORIGIN_RENDERED:
         promotion_blockers.append("grupo compuesto no proviene de DOM renderizado verificado")
     if item_match_count == 0:
@@ -1206,8 +1436,8 @@ def _composite_group_candidate_evidence(
         "selector_origin": origin,
         "state": item_state,
         "match_count": item_match_count,
-        "container_match_count": 0,
-        "selector_contenedor": None,
+        "container_match_count": container_match_count,
+        "selector_contenedor": container_selector,
         "selector_item": item_selector,
         "group_item_count": len(selected_items),
         "candidate_group_item_count": len(unique_items),
@@ -1400,7 +1630,14 @@ def _select_single_interaction(
     traces: list[dict[str, Any]] = []
     for item in inventory:
         seen: set[str] = set()
-        for selector in _single_selector_candidates(item):
+        item_alignment = _candidate_alignment(interaction, item)
+        include_ancestor_scopes = bool(
+            item_alignment["direct_label_exact_match"]
+            or item_alignment["matched_element_direct_variants"]
+            or item_alignment["matched_location_direct_tokens"]
+            or len(item_alignment["matched_primary_direct_tokens"]) >= 2
+        )
+        for selector in _single_selector_candidates(item, include_ancestor_scopes=include_ancestor_scopes):
             selector_text = str(selector)
             if selector_text in seen:
                 continue
@@ -1419,7 +1656,16 @@ def _select_single_interaction(
     traces.sort(
         key=lambda trace: (
             int(bool(trace.get("can_promote"))),
+            int(bool(trace.get("direct_label_exact_match"))),
+            int(bool(trace.get("matched_element_direct_variants"))),
+            len(trace.get("matched_element_direct_variants") or []),
+            int(bool(trace.get("exact_direct_phrase_match"))),
             int(bool(trace.get("matched_primary_direct_tokens"))),
+            len(trace.get("matched_primary_direct_tokens") or []),
+            int(bool(trace.get("matched_location_direct_tokens"))),
+            len(trace.get("matched_location_direct_tokens") or []),
+            int(_trace_has_useful_label(trace)),
+            int(bool(trace.get("exact_context_phrase_match"))),
             int(bool(trace.get("matched_primary_context_tokens"))),
             int(trace.get("alignment_score", 0)),
             int(trace.get("specificity_score", 0)),
@@ -1429,6 +1675,85 @@ def _select_single_interaction(
         reverse=True,
     )
     return (traces[0] if traces else None), traces
+
+
+def _trace_has_useful_label(trace: dict[str, Any]) -> bool:
+    attributes = trace.get("attributes") or {}
+    return useful_visible_text(
+        [
+            trace.get("visible_text"),
+            attributes.get("aria_label"),
+            attributes.get("title"),
+        ]
+    )
+
+
+def _interaction_payload_key(interaction: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(interaction.get("tipo_evento") or "Clic Boton"),
+        str(interaction.get("flujo") or ""),
+        str(interaction.get("ubicacion") or ""),
+        str(interaction.get("elemento") or ""),
+    )
+
+
+def _rule_selector_from_candidate(candidate: dict[str, Any] | None) -> str | None:
+    if not candidate:
+        return None
+    selector = candidate.get("selector_item") or candidate.get("selector")
+    selector_text = str(selector or "").strip()
+    return selector_text or None
+
+
+def _selector_activador_from_selector(selector: str) -> str:
+    parts = [part.strip() for part in str(selector or "").split(",") if part.strip()]
+    selectors: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for value in (part, f"{part} *"):
+            if value in seen:
+                continue
+            seen.add(value)
+            selectors.append(value)
+    return ", ".join(selectors)
+
+
+def _pick_non_conflicting_candidate(
+    *,
+    chosen: dict[str, Any] | None,
+    traces: list[dict[str, Any]],
+    interaction: dict[str, Any],
+    promoted_payloads_by_selector: dict[str, tuple[str, str, str, str]],
+) -> dict[str, Any] | None:
+    selector = _rule_selector_from_candidate(chosen)
+    payload = _interaction_payload_key(interaction)
+    if not selector or not chosen or not chosen.get("can_promote"):
+        return chosen
+
+    existing_payload = promoted_payloads_by_selector.get(selector)
+    if existing_payload is None or existing_payload == payload:
+        return chosen
+
+    alternatives: list[dict[str, Any]] = []
+    for alternative in traces:
+        alternative_selector = _rule_selector_from_candidate(alternative)
+        if not alternative_selector or not alternative.get("can_promote"):
+            continue
+        alternative_payload = promoted_payloads_by_selector.get(alternative_selector)
+        if alternative_payload is None or alternative_payload == payload:
+            alternatives.append(alternative)
+
+    visible_alternative = next(
+        (alternative for alternative in alternatives if _trace_has_useful_label(alternative)),
+        None,
+    )
+    alternative = visible_alternative or (alternatives[0] if alternatives else None)
+    if alternative is not None:
+        adjusted = dict(alternative)
+        adjusted["duplicate_selector_avoided"] = selector
+        return adjusted
+
+    return chosen
 
 
 def _select_group_interaction(
@@ -1792,6 +2117,7 @@ def propose_selectors(
         }
 
     selector_evidence: list[dict[str, Any]] = []
+    promoted_payloads_by_selector: dict[str, tuple[str, str, str, str]] = {}
 
     for index, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         interaction.setdefault("warnings", [])
@@ -1885,6 +2211,13 @@ def propose_selectors(
                 ai_rerank_record["warnings"].append(f"AI selector_rerank fallo sin abortar el pipeline: {exc}")
             ai_rerank_artifact["interactions"].append(ai_rerank_record)
 
+        chosen = _pick_non_conflicting_candidate(
+            chosen=chosen,
+            traces=traces,
+            interaction=interaction,
+            promoted_payloads_by_selector=promoted_payloads_by_selector,
+        )
+
         if not chosen:
             interaction["selector_candidato"] = None
             interaction["selector_contenedor"] = None
@@ -1924,7 +2257,8 @@ def propose_selectors(
             interaction["selector_candidato"] = selector
             interaction["selector_contenedor"] = chosen.get("selector_contenedor")
             interaction["selector_item"] = chosen.get("selector_item") or selector
-            interaction["selector_activador"] = f"{selector}, {selector} *"
+            interaction["selector_activador"] = _selector_activador_from_selector(interaction["selector_item"])
+            promoted_payloads_by_selector[interaction["selector_item"]] = _interaction_payload_key(interaction)
             if chosen.get("selector_source") in {MANUAL_GOLDEN_HINT_SOURCE, SELECTOR_SOURCE_AI_RERANK}:
                 interaction["selector_metadata"] = {
                     "selector_source": chosen.get("selector_source"),
@@ -1951,6 +2285,10 @@ def propose_selectors(
         if chosen.get("promotion_blockers"):
             interaction["warnings"].append(
                 "Selector retenido por seguridad: " + "; ".join(chosen["promotion_blockers"])
+            )
+        if chosen.get("duplicate_selector_avoided"):
+            interaction["warnings"].append(
+                "Selector alternativo elegido porque el candidato inicial compartia closest con otra interaccion de payload distinto."
             )
         if interaction_mode == "group" and promoted:
             interaction["warnings"].append(

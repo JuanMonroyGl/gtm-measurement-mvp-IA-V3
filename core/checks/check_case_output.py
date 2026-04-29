@@ -21,6 +21,19 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _expected_selector_activador(selector: str) -> str:
+    parts = [part.strip() for part in str(selector or "").split(",") if part.strip()]
+    values: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for value in (part, f"{part} *"):
+            if value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+    return ", ".join(values)
+
+
 def check_case_outputs(repo_root: Path, case_id: str) -> None:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -69,7 +82,7 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
         selector_candidato = interaction.get("selector_candidato")
         selector_activador = interaction.get("selector_activador")
         if selector_candidato:
-            expected = f"{selector_candidato}, {selector_candidato} *"
+            expected = _expected_selector_activador(selector_candidato)
             _assert(
                 selector_activador == expected,
                 f"interaction[{idx}] selector_activador should match consolidated pattern",

@@ -9,6 +9,7 @@ from pathlib import Path
 from core.application.inspect_case import inspect_case_input_structure
 from core.application.extract_ai_images import run_ai_image_extraction
 from core.application.run_case import run_case
+from core.application.run_case_batch import BatchRunOptions, run_case_batch
 from core.cli.context import parse_case_context
 from core.cli.errors import UserFacingError
 from core.cli.parser import build_parser
@@ -20,6 +21,21 @@ def main() -> None:
     repo_root = Path(args.repo_root).resolve()
 
     try:
+        if args.command == "run-batch":
+            result = run_case_batch(
+                repo_root=repo_root,
+                options=BatchRunOptions(
+                    prefix=args.prefix,
+                    start=args.start,
+                    end=args.end,
+                    clean_outputs=args.clean_outputs,
+                    strict_checks=args.strict_checks,
+                    stop_on_error=args.stop_on_error,
+                ),
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+
         if args.command in {"inspect", "run", "ai-images"}:
             context = parse_case_context(repo_root=repo_root, case_path=Path(args.case_path))
             if args.command == "inspect":

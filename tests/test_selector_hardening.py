@@ -7,11 +7,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.checks.check_case_output import check_case_outputs
+from core.checks.check_case_output import _expected_selector_activador
 from core.output_generation.generate_gtm_tag import build_tag_template
 from core.processing.selectors.build_selectors import propose_selectors
 from core.processing.selectors.validate_selectors import validate_selector_candidates
 from core.processing.validation.case_metrics import compute_case_metrics
-from web_scraping.snapshot_dom import _state_change_observed
+from web_scraping.snapshot_dom import _extract_clickables_from_html, _state_change_observed
 
 
 class SelectorHardeningTests(unittest.TestCase):
@@ -167,6 +168,14 @@ class SelectorHardeningTests(unittest.TestCase):
         self.assertIn('e.closest("#pay-btn")', tag)
         self.assertNotIn('e.closest("button")', tag)
 
+    def test_strict_check_accepts_compound_selector_activador_pattern(self) -> None:
+        selector = 'a[href="/uno"], a[href="/dos"]'
+
+        self.assertEqual(
+            _expected_selector_activador(selector),
+            'a[href="/uno"], a[href="/uno"] *, a[href="/dos"], a[href="/dos"] *',
+        )
+
     def test_strict_check_fails_for_stub_trigger_and_no_rules(self) -> None:
         temp_root = Path.cwd() / "tests_artifacts_case_output"
         if temp_root.exists():
@@ -263,6 +272,20 @@ class SelectorHardeningTests(unittest.TestCase):
         }
         after_signature = dict(before_signature)
         self.assertFalse(_state_change_observed(before_signature, after_signature, "<html>a</html>", "<html>a</html>"))
+
+    def test_fallback_inventory_discovers_accordion_title_divs(self) -> None:
+        html = (
+            '<html><body><div class="containerAcordeonesInfo">'
+            '<div class="tituloAcordeonInfo">'
+            "T\u00e9rminos y Condiciones para la Acumulaci\u00f3n - Persona Natural"
+            "</div></div></body></html>"
+        )
+
+        _annotated, inventory = _extract_clickables_from_html(html, "raw_html_fallback", "raw_html_fallback")
+
+        title_items = [item for item in inventory if item.get("class_list") == ["tituloAcordeonInfo"]]
+        self.assertEqual(len(title_items), 1)
+        self.assertIn("div.tituloAcordeonInfo", title_items[0]["selector_candidates"])
 
     def test_all_null_selectors_are_reported_in_metrics(self) -> None:
         measurement_case = {

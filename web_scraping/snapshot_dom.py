@@ -22,7 +22,24 @@ except ImportError:  # optional dependency at runtime, but explicitly reported.
 
 
 NODE_ID_ATTR = "data-gtm-mvp-node-id"
-CLICKABLE_SELECTOR = 'a, button, [role="button"], summary, input, [onclick], [tabindex]'
+NATIVE_CLICKABLE_SELECTOR = 'a, button, [role="button"], summary, input, [onclick], [tabindex]'
+CLICKABLE_LIKE_CLASS_SELECTOR = ", ".join(
+    [
+        ".tituloAcordeonInfo",
+        ".titulo-acordeon-info",
+        ".acordeon-header",
+        ".acordeon-title",
+        ".accordion-header",
+        ".accordion-title",
+        ".accordion-button",
+        ".bc-accordion-header",
+        ".filter__option",
+        ".filter__option-desktop",
+        ".tab-title",
+        ".tab-label",
+    ]
+)
+CLICKABLE_SELECTOR = f"{NATIVE_CLICKABLE_SELECTOR}, {CLICKABLE_LIKE_CLASS_SELECTOR}"
 STATE_SEQUENCE = [
     "initial_render",
     "after_scroll",
@@ -40,13 +57,17 @@ OPTIONAL_STATE_DEFINITIONS = [
     },
     {
         "name": "tabs_expanded",
-        "selector": '[role="tab"], .tab, .tabs button',
+        "selector": '[role="tab"], .tab, .tabs button, .tab-title, .tab-label',
         "limit": 3,
         "action": "click",
     },
     {
         "name": "accordion_open",
-        "selector": 'summary, [aria-expanded="false"], .accordion button',
+        "selector": (
+            'summary, [aria-expanded="false"], .accordion button, .accordion-header, '
+            '.accordion-title, .accordion-button, .bc-accordion-header, .tituloAcordeonInfo, '
+            '.titulo-acordeon-info, .acordeon-header, .acordeon-title'
+        ),
         "limit": 5,
         "action": "click",
     },
@@ -299,6 +320,8 @@ def _extract_clickables_with_playwright(page: Page, state: str, source: str) -> 
           const t = (el.getAttribute('type') || '').toLowerCase();
           return ['button', 'submit', 'radio', 'checkbox', 'image'].includes(t);
         }}
+        const classText = Array.from(el.classList || []).join(' ');
+        if (/(^|\\s)(tituloAcordeonInfo|titulo-acordeon-info|acordeon-header|acordeon-title|accordion-header|accordion-title|accordion-button|bc-accordion-header|filter__option|filter__option-desktop|tab-title|tab-label)(\\s|$)/i.test(classText)) return true;
         const ti = el.getAttribute('tabindex');
         return ti !== null && ti !== '-1';
       }}
